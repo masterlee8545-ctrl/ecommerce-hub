@@ -1,0 +1,29 @@
+#!/usr/bin/env sh
+
+# BUYWISE 이커머스 통합관리 — pre-commit hook
+# CLAUDE.md §2 자기검증 5+1 자동화
+
+set -e
+
+echo ""
+echo "================================================================"
+echo "  pre-commit: lint + typecheck + build 통합 검증 시작"
+echo "================================================================"
+
+echo ""
+echo "[1/3] lint-staged (ESLint + 헌법 룰 검사)..."
+npx lint-staged
+
+echo ""
+echo "[2/3] TypeScript 전체 타입 체크..."
+npx tsc --noEmit
+
+echo ""
+echo "[3/3] Next.js 프로덕션 빌드 검증..."
+npm run build
+
+echo ""
+echo "================================================================"
+echo "  ✅ pre-commit 검증 통과"
+echo "================================================================"
+echo ""

@@ -1,0 +1,107 @@
+/**
+ * 전역 CSS — Tailwind 진입점 + BUYWISE 디자인 토큰
+ *
+ * 출처: tailwind.config.ts
+ *
+ * 구성:
+ * 1. Pretendard 폰트 import (CDN)
+ * 2. Tailwind base/components/utilities 지시어
+ * 3. shadcn/ui CSS 변수 (HSL — Light/Dark)
+ * 4. 전역 base 스타일
+ */
+
+/* ─── 1. Pretendard 폰트 ─── */
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css');
+
+/* ─── 2. Tailwind 지시어 ─── */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── 3. shadcn/ui 디자인 토큰 (HSL 형식) ─── */
+@layer base {
+  :root {
+    /* Light 모드 */
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%; /* navy-900 */
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Primary = BUYWISE Teal #0D9488 */
+    --primary: 174 84% 32%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Secondary = Navy 회색 톤 */
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+
+    --accent: 174 84% 32%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%; /* score-bad */
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 174 84% 32%; /* teal */
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    /* Dark 모드 — 추후 확장 */
+    --background: 222 47% 11%;
+    --foreground: 0 0% 98%;
+
+    --card: 222 47% 11%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 222 47% 11%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 174 64% 42%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 174 64% 42%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+    --ring: 174 64% 42%;
+  }
+}
+
+/* ─── 4. 전역 base 스타일 ─── */
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+  }
+  /* 한글 가독성 — 숫자 등폭 */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
