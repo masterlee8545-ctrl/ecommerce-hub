@@ -5,7 +5,7 @@
  * 헌법: CLAUDE.md §1 P-3 (신뢰도 마킹 강제), §10 (마진은 estimated)
  * ADR: ADR-007 (cogs/margin은 추정값, *_confidence 컬럼 강제)
  *
- * 역할: 6단계 파이프라인(Research → Sourcing → Importing → Listing → Active → Branding)을
+ * 역할: 5단계 파이프라인(Research → Sourcing → Importing → Listing → Active)을
  * 거치는 상품의 마스터 표. 모든 단계가 이 표를 중심으로 연결된다.
  *
  * 핵심 제약:
@@ -44,7 +44,7 @@ export const products = pgTable(
     category: text('category'), //                         '생활용품', '농산물' 등
 
     // 파이프라인 단계 (6단계 + research)
-    status: text('status').notNull(), //                   'research'|'sourcing'|'importing'|'listing'|'active'|'branding'
+    status: text('status').notNull(), //                   'research'|'sourcing'|'importing'|'listing'|'active'
 
     // ─── 가격 정보 (모두 *_confidence 강제 — P-3) ───
     cogs_cny: decimal('cogs_cny', { precision: 12, scale: 2 }), //         원가 (위안)

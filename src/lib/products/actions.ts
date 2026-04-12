@@ -27,7 +27,7 @@ import { requireCompanyContext } from '@/lib/auth/session';
 
 import { type ProductActionState, type ProductFieldKey } from './action-types';
 import { CONFIDENCE_LEVELS, PIPELINE_STAGES, type ConfidenceLevel, type PipelineStage } from './constants';
-import { createProduct, updateProduct } from './mutations';
+import { createProduct, updateProduct, suggestNextProductCode } from './mutations';
 import { transitionProductStatus } from './transitions';
 
 // ─────────────────────────────────────────────────────────
@@ -291,4 +291,117 @@ export async function transitionProductStatusAction(form: FormData): Promise<voi
   revalidatePath('/tasks'); //                          자동 생성된 task가 작업 목록에 반영되도록
   revalidatePath('/'); //                               대시보드 카운터 업데이트
   redirect(`/products/${productId}`);
+}
+
+// ─────────────────────────────────────────────────────────
+// 액션 — 장바구니 빠른 추가 (상품 발굴용)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * research 페이지 장바구니에서 호출.
+ * 이름만으로 빠르게 상품 등록 (코드 자동 생성, status = 'research').
+ * sourceUrl, memo는 description에 저장.
+ */
+export async function quickAddToBasketAction(form: FormData): Promise<void> {
+  const name = getStringField(form, 'name').trim();
+  const sourceUrl = getOptionalStringField(form, 'sourceUrl');
+  const memo = getOptionalStringField(form, 'memo');
+
+  if (name.length === 0) {
+    throw new Error('상품 이름을 입력해주세요.');
+  }
+
+  const ctx = await requireCompanyContext();
+
+  // 코드 자동 생성
+  let code: string;
+  try {
+    code = await suggestNextProductCode(ctx.companyId);
+  } catch {
+    // DB 미준비 시 timestamp 기반 폴백
+    code = `PROD-${Date.now()}`;
+  }
+
+  // description에 소스URL + 메모 합침
+  const descParts: string[] = [];
+  if (sourceUrl) descParts.push(`소스: ${sourceUrl}`);
+  if (memo) descParts.push(memo);
+  const description = descParts.length > 0 ? descParts.join('\n') : null;
+
+  try {
+    await createProduct({
+      companyId: ctx.companyId,
+      code,
+      name,
+      description,
+      createdBy: ctx.userId,
+      ownerUserId: ctx.userId,
+    });
+  } catch (err) {
+    console.error('[quickAddToBasketAction] 저장 실패:', err);
+    throw new Error(
+      err instanceof Error
+        ? `장바구니 추가 실패: ${err.message}`
+        : '장바구니 추가 중 오류가 발생했습니다.',
+    );
+  }
+
+  revalidatePath('/research');
+  revalidatePath('/products');
+  revalidatePath('/');
+}
+
+// ─────────────────────────────────────────────────────────
+// 액션 — 가격 정보 저장 (계산기에서 호출)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * 원가/판매가/마진율을 상품에 저장.
+ * CostCalculator 컴포넌트의 hidden input으로 전달됨.
+ */
+export async function savePricingAction(form: FormData): Promise<void> {
+  const productId = getStringField(form, 'productId').trim();
+  if (!productId) {
+    throw new Error('상품 ID가 없습니다.');
+  }
+
+  const cogsKrw = parseDecimalField(form, 'cogsKrw');
+  const sellingPriceKrw = parseDecimalField(form, 'sellingPriceKrw');
+  const marginRateRaw = parseDecimalField(form, 'marginRate');
+
+  const ctx = await requireCompanyContext();
+
+  try {
+    await updateProduct({
+      companyId: ctx.companyId,
+      productId,
+      cogsCny: null,
+      sellingPriceKrw: sellingPriceKrw,
+      marginRate: marginRateRaw,
+    });
+
+    // cogs_krw는 별도 컬럼이므로 직접 업데이트
+    if (cogsKrw !== null) {
+      const { withCompanyContext } = await import('@/db');
+      const { products } = await import('@/db/schema');
+      const { eq, and } = await import('drizzle-orm');
+      await withCompanyContext(ctx.companyId, async (tx) => {
+        await tx
+          .update(products)
+          .set({ cogs_krw: String(cogsKrw), updated_at: new Date() })
+          .where(and(eq(products.id, productId), eq(products.company_id, ctx.companyId)));
+      });
+    }
+  } catch (err) {
+    console.error('[savePricingAction] 저장 실패:', err);
+    throw new Error(
+      err instanceof Error
+        ? `가격 저장 실패: ${err.message}`
+        : '가격 저장 중 오류가 발생했습니다.',
+    );
+  }
+
+  revalidatePath('/sourcing');
+  revalidatePath('/products');
+  revalidatePath(`/products/${productId}`);
 }

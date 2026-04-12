@@ -8,13 +8,12 @@
  * - 'use client' 컴포넌트가 직접 import 할 수 있는 순수 상수
  * - DB 모듈 의존성 0 (postgres, drizzle 등 import 금지)
  *
- * 6단계 파이프라인:
- * 1. research   — 키워드/리뷰 분석
- * 2. sourcing   — 공급사 견적
- * 3. importing  — 발주/통관
- * 4. listing    — 쿠팡/네이버 등록
- * 5. active     — 판매중
- * 6. branding   — 브랜딩 (선택)
+ * 5단계 파이프라인:
+ * 1. research   — 상품 발굴 (키워드 + 리뷰 검증)
+ * 2. sourcing   — 수입 의뢰 (견적 + 원가)
+ * 3. importing  — 수입중 (발주 + 배송)
+ * 4. listing    — 상세페이지/등록
+ * 5. active     — 런칭/마케팅
  */
 
 // ─────────────────────────────────────────────────────────
@@ -27,7 +26,6 @@ export const PIPELINE_STAGES = [
   'importing',
   'listing',
   'active',
-  'branding',
 ] as const;
 
 export type PipelineStage = (typeof PIPELINE_STAGES)[number];
@@ -38,40 +36,34 @@ export const PIPELINE_STAGE_META: Record<
   { label: string; description: string; color: string; bgColor: string }
 > = {
   research: {
-    label: '리서치',
-    description: '키워드/리뷰 분석',
+    label: '상품 발굴',
+    description: '키워드 조사 + 리뷰 검증',
     color: 'text-blue-700',
     bgColor: 'bg-blue-50',
   },
   sourcing: {
-    label: '소싱',
-    description: '공급사 견적',
+    label: '수입 의뢰',
+    description: '견적 요청 + 원가 산정',
     color: 'text-yellow-700',
     bgColor: 'bg-yellow-50',
   },
   importing: {
-    label: '수입',
-    description: '발주/통관',
+    label: '수입중',
+    description: '발주 + 배송 추적',
     color: 'text-purple-700',
     bgColor: 'bg-purple-50',
   },
   listing: {
-    label: '등록',
-    description: '쿠팡/네이버 등록',
+    label: '상세페이지/등록',
+    description: '디자인 + 쿠팡/네이버 등록',
     color: 'text-orange-700',
     bgColor: 'bg-orange-50',
   },
   active: {
-    label: '판매중',
-    description: '판매 관리',
+    label: '런칭/마케팅',
+    description: '로켓 + 리뷰 + 블로그 + 바이럴',
     color: 'text-teal-700',
     bgColor: 'bg-teal-50',
-  },
-  branding: {
-    label: '브랜딩',
-    description: '브랜드 강화',
-    color: 'text-pink-700',
-    bgColor: 'bg-pink-50',
   },
 };
 
@@ -89,15 +81,14 @@ export const CONFIDENCE_META: Record<ConfidenceLevel, { label: string; color: st
 };
 
 // ─────────────────────────────────────────────────────────
-// 상태 전이 규칙 (직진형 — 6단계 순서)
+// 상태 전이 규칙 (직진형 — 5단계 순서)
 // ─────────────────────────────────────────────────────────
 
 /**
  * 각 단계에서 한 번에 전환 가능한 다음 단계.
- * 보통은 +1단계만 허용하지만, listing → active는 검토 후 진행.
  *
  * 정책:
- * - branding은 최종 단계 (다음 없음)
+ * - active는 최종 단계 (다음 없음)
  * - 뒤로 되돌리기는 별도 함수 (revertProductStatus)에서 처리 — 현재 미구현
  */
 export const NEXT_STAGES: Record<PipelineStage, PipelineStage[]> = {
@@ -105,8 +96,7 @@ export const NEXT_STAGES: Record<PipelineStage, PipelineStage[]> = {
   sourcing: ['importing'],
   importing: ['listing'],
   listing: ['active'],
-  active: ['branding'],
-  branding: [],
+  active: [],
 };
 
 // ─────────────────────────────────────────────────────────
@@ -211,15 +201,6 @@ export const TRANSITION_TASK_MAP: Record<string, TransitionTaskSpec[]> = {
       title: '광고 예산 검토',
       daysUntilDue: 7,
       priority: 'normal',
-    },
-  ],
-  // 판매중 → 브랜딩: 브랜드 스토어
-  'active:branding': [
-    {
-      taskType: 'brand_store_design',
-      title: '브랜드 스토어 기획',
-      daysUntilDue: 30,
-      priority: 'low',
     },
   ],
 };

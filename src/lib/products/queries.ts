@@ -108,7 +108,6 @@ export async function countProductsByStage(
     importing: 0,
     listing: 0,
     active: 0,
-    branding: 0,
   };
 
   return withCompanyContext(companyId, async (tx) => {

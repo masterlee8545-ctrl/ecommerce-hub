@@ -16,8 +16,8 @@
  * 적용 페이지:
  * - / (홈 대시보드)
  * - /research/* (리서치 단계)
- * - /sourcing/*, /importing/*, /listing/*, /active/*, /branding/*
- * - /tasks, /notifications, /settings, /ads
+ * - /sourcing/*, /importing/*, /listing/*, /active/*
+ * - /tasks, /notifications, /settings, /products
  */
 import { Header } from '@/components/layout/header';
 import { Sidebar } from '@/components/layout/sidebar';

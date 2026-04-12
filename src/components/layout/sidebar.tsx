@@ -47,59 +47,52 @@ interface NavSection {
 
 const SECTIONS: NavSection[] = [
   {
-    title: '6단계 파이프라인',
+    title: '상품 파이프라인',
     items: [
       {
         step: 1,
         href: '/research',
-        label: '리서치',
-        description: '쿠팡 리뷰 + 트렌드',
+        label: '상품 발굴',
+        description: '키워드 조사 + 리뷰 검증',
         dotColor: 'bg-blue-500',
       },
       {
         step: 2,
         href: '/sourcing',
-        label: '소싱',
-        description: '공급사 + 견적',
+        label: '수입 의뢰',
+        description: '견적 요청 + 원가 산정',
         dotColor: 'bg-yellow-500',
       },
       {
         step: 3,
         href: '/importing',
-        label: '수입',
-        description: '발주 + 통관',
+        label: '수입중',
+        description: '발주 + 배송 추적',
         dotColor: 'bg-purple-500',
       },
       {
         step: 4,
         href: '/listing',
-        label: '등록',
-        description: '쿠팡/네이버 리스팅',
+        label: '상세페이지/등록',
+        description: '디자인 + 쿠팡/네이버 등록',
         dotColor: 'bg-orange-500',
       },
       {
         step: 5,
         href: '/active',
-        label: '판매',
-        description: '재고 + 판매 분석',
+        label: '런칭/마케팅',
+        description: '로켓 + 리뷰 + 블로그 + 바이럴',
         dotColor: 'bg-teal-600',
-      },
-      {
-        step: 6,
-        href: '/branding',
-        label: '브랜딩',
-        description: 'SEO + 광고',
-        dotColor: 'bg-pink-500',
       },
     ],
   },
   {
     title: '운영',
     items: [
-      { href: '/tasks', label: '작업', description: '내 할 일' },
+      { href: '/products', label: '전체 상품', description: '상품 목록 + 현황' },
+      { href: '/tasks', label: '할 일', description: '내 작업 보드' },
       { href: '/notifications', label: '알림', description: '시스템 알림' },
-      { href: '/ads', label: '광고 관리', description: '캠페인 + 키워드' },
-      { href: '/settings', label: '설정', description: '회사·관세·사용자' },
+      { href: '/settings', label: '설정', description: '회사 · 사용자' },
     ],
   },
 ];

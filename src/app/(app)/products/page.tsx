@@ -1,13 +1,13 @@
 /**
- * /products — 상품 파이프라인 목록 (전체 6단계)
+ * /products — 상품 파이프라인 목록 (전체 5단계)
  *
- * 출처: docs/SPEC.md §3 (6단계 파이프라인), E-1c
+ * 출처: docs/SPEC.md §3 (5단계 파이프라인), E-1c
  * 헌법: CLAUDE.md §1 P-1 (빈 결과 명시), §1 P-3 (estimated 마킹),
  *       §1 P-4 (멀티테넌트 RLS), §1 P-9 (사용자 친화 한국어)
  *
  * 역할:
  * - 회사의 모든 상품을 단계별로 표시
- * - 단계 필터 칩 (전체 / research / sourcing / ... / branding)
+ * - 단계 필터 칩 (전체 / research / sourcing / ... / active)
  * - 각 카드: 코드, 이름, 단계 배지, 카테고리, 원가/마진 + 신뢰도, 등록일
  * - 코드/이름 클릭 → /products/[id] 상세
  *

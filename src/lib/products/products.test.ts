@@ -6,7 +6,7 @@
  *       §1 P-4 (멀티테넌트)
  *
  * 검증 항목:
- * 1. 상수 무결성 (PIPELINE_STAGES 6단계, NEXT_STAGES, TASK_TYPES 15종)
+ * 1. 상수 무결성 (PIPELINE_STAGES 5단계, NEXT_STAGES, TASK_TYPES 15종)
  * 2. buildTransitionIdempotencyKey — ADR-005 멱등 키 형식
  * 3. parsePipelineStageFilter — URL 쿼리 파싱
  * 4. createProduct — 입력 검증
@@ -37,16 +37,16 @@ const FAKE_PRODUCT_ID = '00000000-0000-0000-0000-000000000002';
 // 1. 상수 무결성
 // ─────────────────────────────────────────────────────────
 
-describe('PIPELINE_STAGES — 6단계 무결성', () => {
-  it('6단계 정의됨', () => {
-    const EXPECTED_COUNT = 6;
+describe('PIPELINE_STAGES — 5단계 무결성', () => {
+  it('5단계 정의됨', () => {
+    const EXPECTED_COUNT = 5;
     expect(PIPELINE_STAGES).toHaveLength(EXPECTED_COUNT);
   });
 
-  it('research → branding 순서로 정의', () => {
+  it('research → active 순서로 정의', () => {
     expect(PIPELINE_STAGES[0]).toBe('research');
-    const LAST_INDEX = 5;
-    expect(PIPELINE_STAGES[LAST_INDEX]).toBe('branding');
+    const LAST_INDEX = 4;
+    expect(PIPELINE_STAGES[LAST_INDEX]).toBe('active');
   });
 
   it('모든 단계가 NEXT_STAGES에 매핑됨', () => {
@@ -55,8 +55,8 @@ describe('PIPELINE_STAGES — 6단계 무결성', () => {
     }
   });
 
-  it('branding은 최종 단계 — 다음 없음', () => {
-    expect(NEXT_STAGES.branding).toEqual([]);
+  it('active는 최종 단계 — 다음 없음', () => {
+    expect(NEXT_STAGES.active).toEqual([]);
   });
 
   it('각 단계는 최대 1개의 다음 단계만 가짐 (직진형)', () => {
@@ -83,9 +83,9 @@ describe('TASK_TYPES — 15종 task 정의 (SPEC §7)', () => {
   });
 });
 
-describe('TRANSITION_TASK_MAP — 5개 전이 매핑', () => {
-  it('5개 전이 정의 (research:sourcing ~ active:branding)', () => {
-    const EXPECTED_COUNT = 5;
+describe('TRANSITION_TASK_MAP — 4개 전이 매핑', () => {
+  it('4개 전이 정의 (research:sourcing ~ listing:active)', () => {
+    const EXPECTED_COUNT = 4;
     expect(Object.keys(TRANSITION_TASK_MAP)).toHaveLength(EXPECTED_COUNT);
   });
 

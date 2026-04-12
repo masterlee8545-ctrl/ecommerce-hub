@@ -5,7 +5,7 @@
  * 헌법: CLAUDE.md §1 P-3 (신뢰도 마킹), §1 P-4 (멀티테넌트)
  *
  * 역할:
- * - 회사별 6단계 파이프라인 단계별 상품 수 집계
+ * - 회사별 5단계 파이프라인 단계별 상품 수 집계
  * - 미해결 작업 수, 미읽은 알림 수
  *
  * 모든 함수는 withCompanyContext 안에서 호출되어야 함 (P-4).
@@ -24,8 +24,7 @@ export type PipelineStage =
   | 'sourcing'
   | 'importing'
   | 'listing'
-  | 'active'
-  | 'branding';
+  | 'active';
 
 export interface PipelineStageCount {
   stage: PipelineStage;
@@ -49,7 +48,6 @@ const ALL_STAGES: PipelineStage[] = [
   'importing',
   'listing',
   'active',
-  'branding',
 ];
 
 /**
