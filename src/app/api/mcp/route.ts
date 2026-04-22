@@ -186,6 +186,7 @@ export async function POST(request: NextRequest) {
     userId: token.userId,
     companyId: token.companyId,
     tokenLabel: token.label,
+    role: token.role,
   };
 
   // 배치 요청 (JSON-RPC 2.0 배치) 지원

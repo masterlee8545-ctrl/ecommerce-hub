@@ -8,10 +8,12 @@
  */
 import { NextResponse, type NextRequest } from 'next/server';
 
+import { assertManager, PermissionError } from '@/lib/auth/permissions';
 import { requireCompanyContext } from '@/lib/auth/session';
 import { enqueueBatch, listRecentBatches } from '@/lib/sello-scraper/job-queue';
 
 const HTTP_BAD_REQUEST = 400;
+const HTTP_FORBIDDEN = 403;
 const HTTP_INTERNAL_SERVER_ERROR = 500;
 const MAX_KEYWORDS_PER_BATCH = 50;
 
@@ -26,6 +28,15 @@ interface EnqueueBody {
 
 export async function POST(request: NextRequest) {
   const ctx = await requireCompanyContext();
+
+  try {
+    assertManager(ctx.role, '배치 분석 시작');
+  } catch (err) {
+    if (err instanceof PermissionError) {
+      return NextResponse.json({ ok: false, error: err.message }, { status: HTTP_FORBIDDEN });
+    }
+    throw err;
+  }
 
   let body: EnqueueBody;
   try {

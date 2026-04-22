@@ -9,7 +9,9 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
 import { MARKETING_CHANNELS, MARKETING_STATUSES, type MarketingChannel, type MarketingStatus } from '@/db/schema';
+import { assertCanManageMarketing } from '@/lib/auth/permissions';
 import { requireCompanyContext } from '@/lib/auth/session';
+import { getProductById } from '@/lib/products/queries';
 
 import { createActivity, updateActivityStatus } from './activities';
 
@@ -46,6 +48,10 @@ export async function createActivityAction(form: FormData): Promise<void> {
 
   const ctx = await requireCompanyContext();
 
+  const product = await getProductById(ctx.companyId, productId);
+  if (!product) throw new Error('상품을 찾을 수 없습니다.');
+  assertCanManageMarketing(ctx.role, product, ctx.userId);
+
   await createActivity({
     companyId: ctx.companyId,
     productId,
@@ -78,6 +84,13 @@ export async function updateActivityStatusAction(form: FormData): Promise<void> 
   const status = statusRaw as MarketingStatus;
 
   const ctx = await requireCompanyContext();
+
+  if (productId) {
+    const product = await getProductById(ctx.companyId, productId);
+    if (!product) throw new Error('상품을 찾을 수 없습니다.');
+    assertCanManageMarketing(ctx.role, product, ctx.userId);
+  }
+
   await updateActivityStatus(ctx.companyId, activityId, status);
 
   if (productId) {

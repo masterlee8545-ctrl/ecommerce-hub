@@ -15,13 +15,15 @@ import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, gt, isNull, or, sql } from 'drizzle-orm';
 
 import { db } from '@/db';
-import { mcpTokens, type McpToken } from '@/db/schema';
+import { mcpTokens, userCompanies, type McpToken } from '@/db/schema';
+import type { CompanyRole } from '@/types/next-auth';
 
 export interface AuthenticatedMcpToken {
   tokenId: string;
   userId: string;
   companyId: string;
   label: string;
+  role: CompanyRole;
 }
 
 const TOKEN_PREFIX = 'mcp_';
@@ -96,6 +98,24 @@ export async function verifyMcpToken(authHeader: string | null): Promise<Authent
   const row = rows[0];
   if (!row) return null;
 
+  // 해당 사용자가 토큰이 가리키는 법인에 아직도 멤버십 있는지 + 어떤 역할인지 조회
+  const membershipRows = await db
+    .select({ role: userCompanies.role })
+    .from(userCompanies)
+    .where(
+      and(
+        eq(userCompanies.user_id, row.user_id),
+        eq(userCompanies.company_id, row.company_id),
+      ),
+    )
+    .limit(1);
+
+  const roleRaw = membershipRows[0]?.role;
+  if (!roleRaw || !['owner', 'manager', 'operator'].includes(roleRaw)) {
+    // 멤버십 박탈 — 토큰 무효화
+    return null;
+  }
+
   // last_used_at 비동기 갱신 (fire-and-forget)
   db.update(mcpTokens)
     .set({ last_used_at: now })
@@ -107,6 +127,7 @@ export async function verifyMcpToken(authHeader: string | null): Promise<Authent
     userId: row.user_id,
     companyId: row.company_id,
     label: row.label,
+    role: roleRaw as CompanyRole,
   };
 }
 

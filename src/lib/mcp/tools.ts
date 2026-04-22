@@ -22,19 +22,27 @@ import {
   type MarketingChannel,
 } from '@/db/schema';
 import { listCompaniesForUser } from '@/lib/auth/company';
+import {
+  assertCanEditPlan,
+  assertCanManageMarketing,
+  assertCanTransitionStatus,
+  assertManager,
+} from '@/lib/auth/permissions';
 import { listCompanyMembers } from '@/lib/auth/user';
 import { createActivity } from '@/lib/marketing/activities';
 import { createProduct, updateProduct } from '@/lib/products/mutations';
 import { getPlanByProductId, upsertPlan } from '@/lib/products/plans';
-import { listProducts } from '@/lib/products/queries';
+import { getProductById, listProducts } from '@/lib/products/queries';
 import { transitionProductStatus } from '@/lib/products/transitions';
 import { DEFAULT_BATCH_CONDITION, type BatchFilterCondition } from '@/lib/research/batch-filter';
 import { enqueueBatch, listJobsForBatch } from '@/lib/sello-scraper/job-queue';
+import type { CompanyRole } from '@/types/next-auth';
 
 export interface McpContext {
   userId: string;
   companyId: string;
   tokenLabel: string;
+  role: CompanyRole;
 }
 
 export interface McpTool {
@@ -97,6 +105,7 @@ const TOOLS: McpTool[] = [
       const active = companies.find((c) => c.id === ctx.companyId);
       return textResult({
         tokenLabel: ctx.tokenLabel,
+        role: ctx.role,
         user: { id: ctx.userId, email: userRows[0]?.email, name: userRows[0]?.name },
         activeCompany: active,
         allCompanies: companies,
@@ -136,6 +145,10 @@ const TOOLS: McpTool[] = [
       const listArgs: Parameters<typeof listProducts>[0] = { companyId: ctx.companyId, limit };
       if (stage) {
         listArgs.stages = [stage as 'research' | 'sourcing' | 'importing' | 'listing' | 'active'];
+      }
+      // operator 는 자기에게 배정된 상품만 — DB 단에서 필터 (RLS 와 별개로 UX 필터)
+      if (ctx.role === 'operator') {
+        listArgs.assigneeUserId = ctx.userId;
       }
       const rows = await listProducts(listArgs);
       return textResult(
@@ -234,6 +247,7 @@ const TOOLS: McpTool[] = [
       },
     },
     handler: async (args, ctx) => {
+      assertManager(ctx.role, '담당자 배정');
       const productId = asString(args.productId, 'productId');
       const role = asString(args.role, 'role');
       const userId = asString(args.userId, 'userId');
@@ -265,6 +279,9 @@ const TOOLS: McpTool[] = [
     },
     handler: async (args, ctx) => {
       const productId = asString(args.productId, 'productId');
+      const product = await getProductById(ctx.companyId, productId);
+      if (!product) throw new Error('[mcp] 상품을 찾을 수 없습니다.');
+      assertCanTransitionStatus(ctx.role, product, ctx.userId);
       const toStage = asString(args.toStage, 'toStage') as
         | 'sourcing'
         | 'importing'
@@ -318,6 +335,9 @@ const TOOLS: McpTool[] = [
     },
     handler: async (args, ctx) => {
       const productId = asString(args.productId, 'productId');
+      const product = await getProductById(ctx.companyId, productId);
+      if (!product) throw new Error('[mcp] 상품을 찾을 수 없습니다.');
+      assertCanEditPlan(ctx.role, product, ctx.userId);
       const sections = Array.isArray(args.sections)
         ? (args.sections as Array<{
             position: number;
@@ -377,6 +397,9 @@ const TOOLS: McpTool[] = [
     },
     handler: async (args, ctx) => {
       const productId = asString(args.productId, 'productId');
+      const product = await getProductById(ctx.companyId, productId);
+      if (!product) throw new Error('[mcp] 상품을 찾을 수 없습니다.');
+      assertCanManageMarketing(ctx.role, product, ctx.userId);
       const channelStr = asString(args.channel, 'channel');
       if (!(MARKETING_CHANNELS as readonly string[]).includes(channelStr)) {
         throw new Error(`[mcp] 유효하지 않은 채널: ${channelStr}`);
@@ -420,6 +443,7 @@ const TOOLS: McpTool[] = [
       },
     },
     handler: async (args, ctx) => {
+      assertManager(ctx.role, '배치 분석 시작');
       const keywords = asStringArray(args.keywords, 'keywords');
       const cond: BatchFilterCondition = {
         reviewThreshold:

@@ -38,6 +38,7 @@ import {
 import { MarketingPanel } from '@/components/products/marketing-panel';
 import { WorkflowPanel } from '@/components/products/workflow-panel';
 import type { Quote } from '@/db/schema';
+import { canManage } from '@/lib/auth/permissions';
 import { requireCompanyContext } from '@/lib/auth/session';
 import { listCompanyMembers } from '@/lib/auth/user';
 import { listActivitiesForProduct } from '@/lib/marketing/activities';
@@ -231,6 +232,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
         initialRocketAssigneeId={product.rocket_assignee_id ?? null}
         members={companyMembers.map((m) => ({ id: m.id, name: m.name, email: m.email }))}
         hasPlan={existingPlan !== null}
+        canEdit={canManage(ctx.role)}
       />
 
       {/* 마케팅 작업 (Step 7) — 체험단·블로그·인스타·쿠팡CPC 등 */}

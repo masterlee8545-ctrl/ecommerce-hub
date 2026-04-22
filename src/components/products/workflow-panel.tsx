@@ -32,6 +32,8 @@ interface WorkflowPanelProps {
   members: Member[];
   /** 기획서 존재 여부 — 링크 라벨 용 */
   hasPlan: boolean;
+  /** 편집 가능 여부 — false 면 readonly + 저장 버튼 숨김 (Phase C: manager+ 만) */
+  canEdit: boolean;
 }
 
 export function WorkflowPanel({
@@ -42,6 +44,7 @@ export function WorkflowPanel({
   initialRocketAssigneeId,
   members,
   hasPlan,
+  canEdit,
 }: WorkflowPanelProps) {
   return (
     <section className="rounded-lg border border-teal-200 bg-teal-50/30 p-5">
@@ -65,7 +68,8 @@ export function WorkflowPanel({
               name="cnSourceUrl"
               defaultValue={initialCnSourceUrl ?? ''}
               placeholder="https://detail.1688.com/offer/..."
-              className="flex-1 rounded-md border border-navy-200 bg-white px-3 py-2 text-sm text-navy-900 placeholder-navy-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+              disabled={!canEdit}
+              className="flex-1 rounded-md border border-navy-200 bg-white px-3 py-2 text-sm text-navy-900 placeholder-navy-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 disabled:cursor-not-allowed disabled:bg-navy-50 disabled:text-navy-500"
             />
             {initialCnSourceUrl && (
               <a
@@ -90,6 +94,7 @@ export function WorkflowPanel({
             name="planAssigneeId"
             initialValue={initialPlanAssigneeId}
             members={members}
+            disabled={!canEdit}
           />
           <AssigneeSelect
             label="상품 등록 담당"
@@ -97,6 +102,7 @@ export function WorkflowPanel({
             name="listingAssigneeId"
             initialValue={initialListingAssigneeId}
             members={members}
+            disabled={!canEdit}
           />
           <AssigneeSelect
             label="로켓 입점 담당"
@@ -104,6 +110,7 @@ export function WorkflowPanel({
             name="rocketAssigneeId"
             initialValue={initialRocketAssigneeId}
             members={members}
+            disabled={!canEdit}
           />
         </div>
 
@@ -125,13 +132,19 @@ export function WorkflowPanel({
               마케팅 작업
             </a>
           </div>
-          <button
-            type="submit"
-            className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-teal-700"
-          >
-            <Save className="h-3.5 w-3.5" />
-            저장
-          </button>
+          {canEdit ? (
+            <button
+              type="submit"
+              className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-teal-700"
+            >
+              <Save className="h-3.5 w-3.5" />
+              저장
+            </button>
+          ) : (
+            <span className="text-[11px] text-navy-400" title="담당자 배정·1688 링크 편집은 매니저 이상만 가능합니다.">
+              🔒 읽기 전용
+            </span>
+          )}
         </div>
       </form>
     </section>
@@ -144,12 +157,14 @@ function AssigneeSelect({
   name,
   initialValue,
   members,
+  disabled,
 }: {
   label: string;
   sublabel: string;
   name: string;
   initialValue: string | null;
   members: Member[];
+  disabled?: boolean;
 }) {
   return (
     <div>
@@ -161,7 +176,8 @@ function AssigneeSelect({
         id={name}
         name={name}
         defaultValue={initialValue ?? ''}
-        className="mt-1 block w-full rounded-md border border-navy-200 bg-white px-3 py-2 text-sm text-navy-900 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+        disabled={disabled}
+        className="mt-1 block w-full rounded-md border border-navy-200 bg-white px-3 py-2 text-sm text-navy-900 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 disabled:cursor-not-allowed disabled:bg-navy-50 disabled:text-navy-500"
       >
         <option value="">— 미배정 —</option>
         {members.map((m) => (

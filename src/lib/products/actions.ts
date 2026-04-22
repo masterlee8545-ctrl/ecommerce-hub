@@ -23,12 +23,19 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
+import {
+  assertCanEditPlan,
+  assertCanTransitionStatus,
+  assertManager,
+  PermissionError,
+} from '@/lib/auth/permissions';
 import { requireCompanyContext } from '@/lib/auth/session';
 
 import { type ProductActionState, type ProductFieldKey } from './action-types';
 import { CONFIDENCE_LEVELS, PIPELINE_STAGES, type ConfidenceLevel, type PipelineStage } from './constants';
 import { createProduct, updateProduct, suggestNextProductCode } from './mutations';
 import { upsertPlan, type PlanSection } from './plans';
+import { getProductById } from './queries';
 import { transitionProductStatus } from './transitions';
 
 // ─────────────────────────────────────────────────────────
@@ -162,6 +169,12 @@ export async function createProductAction(
   form: FormData,
 ): Promise<ProductActionState> {
   const ctx = await requireCompanyContext();
+  try {
+    assertManager(ctx.role, '상품 생성');
+  } catch (err) {
+    if (err instanceof PermissionError) return { ok: false, error: err.message };
+    throw err;
+  }
 
   const validated = validateForm(form, 'create');
   if (!validated.ok) return validated.state;
@@ -212,6 +225,12 @@ export async function updateProductAction(
   }
 
   const ctx = await requireCompanyContext();
+  try {
+    assertManager(ctx.role, '상품 정보 수정');
+  } catch (err) {
+    if (err instanceof PermissionError) return { ok: false, error: err.message };
+    throw err;
+  }
 
   const validated = validateForm(form, 'edit');
   if (!validated.ok) return validated.state;
@@ -269,6 +288,10 @@ export async function transitionProductStatusAction(form: FormData): Promise<voi
   }
 
   const ctx = await requireCompanyContext();
+
+  const product = await getProductById(ctx.companyId, productId);
+  if (!product) throw new Error('상품을 찾을 수 없습니다.');
+  assertCanTransitionStatus(ctx.role, product, ctx.userId);
 
   try {
     await transitionProductStatus({
@@ -402,6 +425,7 @@ export async function bulkAddToBasketAction(form: FormData): Promise<void> {
   }
 
   const ctx = await requireCompanyContext();
+  assertManager(ctx.role, '일괄 장바구니 담기');
 
   let targetCompanyId = ctx.companyId;
   if (targetCompanyIdRaw && targetCompanyIdRaw !== ctx.companyId) {
@@ -483,6 +507,7 @@ export async function updateWorkflowAction(form: FormData): Promise<void> {
   const rocketAssigneeIdRaw = getOptionalStringField(form, 'rocketAssigneeId');
 
   const ctx = await requireCompanyContext();
+  assertManager(ctx.role, '담당자 배정 및 워크플로우 편집');
 
   try {
     await updateProduct({
@@ -550,6 +575,10 @@ export async function savePlanAction(form: FormData): Promise<void> {
 
   const ctx = await requireCompanyContext();
 
+  const product = await getProductById(ctx.companyId, productId);
+  if (!product) throw new Error('상품을 찾을 수 없습니다.');
+  assertCanEditPlan(ctx.role, product, ctx.userId);
+
   try {
     await upsertPlan({
       companyId: ctx.companyId,
@@ -590,6 +619,7 @@ export async function savePricingAction(form: FormData): Promise<void> {
   const marginRateRaw = parseDecimalField(form, 'marginRate');
 
   const ctx = await requireCompanyContext();
+  assertManager(ctx.role, '가격·원가 저장');
 
   try {
     await updateProduct({

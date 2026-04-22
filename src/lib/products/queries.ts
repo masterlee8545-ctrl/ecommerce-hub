@@ -13,7 +13,7 @@
  *
  * 모든 함수는 withCompanyContext 안에서 실행 — RLS 자동 적용.
  */
-import { and, count, desc, eq, inArray } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, or } from 'drizzle-orm';
 
 import { withCompanyContext } from '@/db';
 import { products, type Product } from '@/db/schema';
@@ -39,6 +39,11 @@ export interface ListProductsParams {
   /** 특정 단계만. 빈 배열 / undefined면 전체. */
   stages?: PipelineStage[];
   limit?: number;
+  /**
+   * 지정 시 해당 userId 가 담당자(owner/plan/listing/rocket) 중 하나인 상품만 반환.
+   * Phase C — operator 역할 필터링용.
+   */
+  assigneeUserId?: string;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -80,6 +85,15 @@ export async function listProducts(params: ListProductsParams): Promise<Product[
     const conditions = [eq(products.company_id, params.companyId)];
     if (params.stages && params.stages.length > 0) {
       conditions.push(inArray(products.status, params.stages));
+    }
+    if (params.assigneeUserId) {
+      const assigneeCond = or(
+        eq(products.owner_user_id, params.assigneeUserId),
+        eq(products.plan_assignee_id, params.assigneeUserId),
+        eq(products.listing_assignee_id, params.assigneeUserId),
+        eq(products.rocket_assignee_id, params.assigneeUserId),
+      );
+      if (assigneeCond) conditions.push(assigneeCond);
     }
 
     const rows = await tx

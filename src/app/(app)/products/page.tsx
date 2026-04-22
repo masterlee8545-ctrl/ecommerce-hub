@@ -63,8 +63,17 @@ export default async function ProductsPage({ searchParams }: PageProps) {
   let counts: Record<PipelineStage, number> | null = null;
   let dbError: string | null = null;
   try {
+    const listArgs: Parameters<typeof listProducts>[0] = {
+      companyId: ctx.companyId,
+      stages,
+      limit: PRODUCTS_LIMIT,
+    };
+    // operator 는 자기에게 배정된 상품만 표시
+    if (ctx.role === 'operator') {
+      listArgs.assigneeUserId = ctx.userId;
+    }
     [rows, counts] = await Promise.all([
-      listProducts({ companyId: ctx.companyId, stages, limit: PRODUCTS_LIMIT }),
+      listProducts(listArgs),
       countProductsByStage(ctx.companyId),
     ]);
   } catch (err) {
