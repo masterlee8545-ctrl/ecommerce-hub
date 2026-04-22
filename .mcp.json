@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "itemscout": {
+      "command": "node",
+      "args": ["mcp-servers/itemscout/server.mjs"],
+      "env": {}
+    }
+  }
+}
