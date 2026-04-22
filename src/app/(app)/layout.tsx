@@ -19,8 +19,13 @@
  * - /sourcing/*, /importing/*, /listing/*, /active/*
  * - /tasks, /notifications, /settings, /products
  */
+import { Suspense } from 'react';
+
+import { Toaster } from 'sonner';
+
 import { Header } from '@/components/layout/header';
 import { Sidebar } from '@/components/layout/sidebar';
+import { FlashToast } from '@/components/ui/flash-toast';
 
 export default function AppLayout({
   children,
@@ -40,6 +45,12 @@ export default function AppLayout({
         {/* 페이지 콘텐츠 */}
         <main className="flex-1 overflow-y-auto p-6">{children}</main>
       </div>
+
+      {/* 전역 toast + URL ?flash=... 쿼리 자동 변환 */}
+      <Toaster position="bottom-right" richColors closeButton />
+      <Suspense fallback={null}>
+        <FlashToast />
+      </Suspense>
     </div>
   );
 }

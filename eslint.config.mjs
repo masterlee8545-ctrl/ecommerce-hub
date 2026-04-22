@@ -113,6 +113,24 @@ const config = [
     },
   },
   {
+    // 셀록홈즈 스크래퍼는 ad-hoc Playwright 스크립트 — 타입/린트 완화
+    // (page.evaluate 문자열, 수많은 console.log, 매직 넘버 등 lint 불가 패턴 다수)
+    files: ['scripts/sello-scraper/**'],
+    rules: {
+      'no-console': 'off',
+      'no-magic-numbers': 'off',
+      'no-warning-comments': 'off',
+      'import/order': 'off',
+    },
+  },
+  {
+    // adapter/normalize/metrics — 단위 변환 상수가 많아 매직넘버 경고 완화
+    files: ['src/lib/sello-scraper/**'],
+    rules: {
+      'no-magic-numbers': 'off',
+    },
+  },
+  {
     ignores: [
       'node_modules/**',
       '.next/**',
@@ -120,6 +138,7 @@ const config = [
       'dist/**',
       'public/**',
       'drizzle/migrations/**',
+      'scripts/sello-scraper/**',
     ],
   },
 ];

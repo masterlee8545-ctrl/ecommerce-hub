@@ -39,6 +39,9 @@ export * from './research-review-analyses';
 export * from './products';
 // 나머지는 products를 참조
 export * from './product-state-history';
+export * from './product-plans'; //      Step 4 — 상세페이지 기획서
+export * from './marketing-activities'; // Step 7 — 마케팅 작업 트래킹
+export * from './scrape-jobs'; //         배치 분석 — Vercel+Supabase+로컬워커 큐
 export * from './quotes';
 export * from './purchase-orders';
 export * from './listings';
@@ -56,7 +59,7 @@ export * from './seo-targets';
 export * from './keyword-rankings';
 
 // ───────────────────────────────────────────────────────────
-// 그룹 D — 운영 (4)
+// 그룹 D — 운영 (5)
 // ───────────────────────────────────────────────────────────
 // tasks를 task_history와 notifications가 참조
 export * from './tasks';

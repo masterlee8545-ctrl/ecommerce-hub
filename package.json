@@ -19,6 +19,10 @@
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx --env-file=.env.local drizzle/seeds/seed.ts",
     "env:check": "tsx --env-file=.env.local scripts/check-env.ts",
+    "sello:scrape": "tsx scripts/sello-scraper/scrape.ts",
+    "sello:login": "tsx --env-file=.env.local scripts/sello-scraper/login.ts",
+    "sello:worker": "tsx --env-file=.env.local scripts/sello-scraper/worker.ts",
+    "itemscout:smoke": "tsx --env-file=.env.local scripts/itemscout-smoke.ts",
     "gc": "npm run lint && npm run typecheck && npm run test && npm run build",
     "prepare": "husky"
   },
@@ -45,14 +49,17 @@
     "lucide-react": "^0.460.0",
     "next": "^15.5.14",
     "next-auth": "^5.0.0-beta.30",
+    "playwright": "^1.59.1",
     "postgres": "^3.4.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
     "tailwindcss-animate": "^1.0.7",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
     "@types/react": "^19",

@@ -166,6 +166,41 @@ export async function listUserCompanies(userId: string): Promise<UserCompanyMemb
 }
 
 /**
+ * 특정 회사 의 멤버 전원 조회 (담당자 배정 드롭다운용).
+ *
+ * 반환: 이름·이메일 포함. password_hash 는 절대 내보내지 않음.
+ * 활성 사용자(is_active) 만 포함.
+ */
+export interface CompanyMember {
+  id: string;
+  email: string;
+  name: string;
+  role: 'owner' | 'manager' | 'operator';
+}
+
+export async function listCompanyMembers(companyId: string): Promise<CompanyMember[]> {
+  if (!companyId) return [];
+  const rows = await db
+    .select({
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      isActive: users.is_active,
+      role: userCompanies.role,
+    })
+    .from(userCompanies)
+    .innerJoin(users, eq(users.id, userCompanies.user_id))
+    .where(eq(userCompanies.company_id, companyId));
+
+  return rows
+    .filter((r) => r.isActive === true)
+    .filter((r): r is { id: string; email: string; name: string; isActive: boolean; role: 'owner' | 'manager' | 'operator' } =>
+      ['owner', 'manager', 'operator'].includes(r.role),
+    )
+    .map((r) => ({ id: r.id, email: r.email, name: r.name, role: r.role }));
+}
+
+/**
  * 사용자가 특정 회사의 멤버인지 확인.
  *
  * 사용처:

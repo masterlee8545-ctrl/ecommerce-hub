@@ -35,8 +35,12 @@ import {
   XCircle,
 } from 'lucide-react';
 
+import { MarketingPanel } from '@/components/products/marketing-panel';
+import { WorkflowPanel } from '@/components/products/workflow-panel';
 import type { Quote } from '@/db/schema';
 import { requireCompanyContext } from '@/lib/auth/session';
+import { listCompanyMembers } from '@/lib/auth/user';
+import { listActivitiesForProduct } from '@/lib/marketing/activities';
 import { transitionProductStatusAction, updateProductAction } from '@/lib/products/actions';
 import {
   CONFIDENCE_META,
@@ -47,6 +51,7 @@ import {
   type ConfidenceLevel,
   type PipelineStage,
 } from '@/lib/products/constants';
+import { getPlanByProductId } from '@/lib/products/plans';
 import { getProductById } from '@/lib/products/queries';
 import { listProductStateHistory } from '@/lib/products/transitions';
 import { acceptQuoteAction, updateQuoteStatusAction } from '@/lib/sourcing/actions';
@@ -85,12 +90,16 @@ export default async function ProductDetailPage({ params }: PageProps) {
   const product = await getProductById(ctx.companyId, id);
   if (!product) notFound();
 
-  // 병렬 조회 — 이력, 견적, 공급사
-  const [historyResult, quotesResult, suppliersResult] = await Promise.allSettled([
-    listProductStateHistory(ctx.companyId, id),
-    listQuotesForProduct({ companyId: ctx.companyId, productId: id }),
-    listSuppliers({ companyId: ctx.companyId, limit: MAX_SUPPLIER_OPTIONS }),
-  ]);
+  // 병렬 조회 — 이력, 견적, 공급사, 멤버, 기획서, 마케팅 활동
+  const [historyResult, quotesResult, suppliersResult, membersResult, planResult, marketingResult] =
+    await Promise.allSettled([
+      listProductStateHistory(ctx.companyId, id),
+      listQuotesForProduct({ companyId: ctx.companyId, productId: id }),
+      listSuppliers({ companyId: ctx.companyId, limit: MAX_SUPPLIER_OPTIONS }),
+      listCompanyMembers(ctx.companyId),
+      getPlanByProductId(ctx.companyId, id),
+      listActivitiesForProduct(ctx.companyId, id),
+    ]);
 
   const history: Awaited<ReturnType<typeof listProductStateHistory>> =
     historyResult.status === 'fulfilled' ? historyResult.value : [];
@@ -111,6 +120,22 @@ export default async function ProductDetailPage({ params }: PageProps) {
     }
   } else {
     console.error('[products/[id]] 공급사 조회 실패:', suppliersResult.reason);
+  }
+
+  const companyMembers =
+    membersResult.status === 'fulfilled' ? membersResult.value : [];
+  if (membersResult.status === 'rejected') {
+    console.error('[products/[id]] 멤버 조회 실패:', membersResult.reason);
+  }
+  const existingPlan =
+    planResult.status === 'fulfilled' ? planResult.value : null;
+  if (planResult.status === 'rejected') {
+    console.error('[products/[id]] 기획서 조회 실패:', planResult.reason);
+  }
+  const marketingActivitiesList =
+    marketingResult.status === 'fulfilled' ? marketingResult.value : [];
+  if (marketingResult.status === 'rejected') {
+    console.error('[products/[id]] 마케팅 활동 조회 실패:', marketingResult.reason);
   }
 
   const currentStage: PipelineStage | null = isPipelineStage(product.status)
@@ -196,6 +221,24 @@ export default async function ProductDetailPage({ params }: PageProps) {
           </div>
         )}
       </header>
+
+      {/* 워크플로우 — 1688 링크 · 담당자 3명 · 기획서 바로가기 (Step 3/4/5) */}
+      <WorkflowPanel
+        productId={product.id}
+        initialCnSourceUrl={product.cn_source_url ?? null}
+        initialPlanAssigneeId={product.plan_assignee_id ?? null}
+        initialListingAssigneeId={product.listing_assignee_id ?? null}
+        initialRocketAssigneeId={product.rocket_assignee_id ?? null}
+        members={companyMembers.map((m) => ({ id: m.id, name: m.name, email: m.email }))}
+        hasPlan={existingPlan !== null}
+      />
+
+      {/* 마케팅 작업 (Step 7) — 체험단·블로그·인스타·쿠팡CPC 등 */}
+      <MarketingPanel
+        productId={product.id}
+        activities={marketingActivitiesList}
+        members={companyMembers.map((m) => ({ id: m.id, name: m.name, email: m.email }))}
+      />
 
       {/* 단계 전환 패널 */}
       {currentStage && allowedNextStages.length > 0 && (

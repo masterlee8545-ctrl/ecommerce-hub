@@ -57,9 +57,20 @@ export const products = pgTable(
     // ─── 소싱 관련 ───
     primary_supplier_id: uuid('primary_supplier_id').references(() => suppliers.id),
     primary_keyword_id: uuid('primary_keyword_id').references(() => keywords.id),
+    /**
+     * 1688 (또는 타오바오/알리바바) 소스 URL.
+     * 수입업체에 인계 시 참조 — 외부 공급자가 동일 상품을 찾아 견적 낼 때 사용.
+     */
+    cn_source_url: text('cn_source_url'),
 
-    // 담당자
+    // 담당자 (3종 — 워크플로우 책임 분리)
     owner_user_id: uuid('owner_user_id').references(() => users.id),
+    /** 상세페이지 기획·제작 담당 (Step 4) */
+    plan_assignee_id: uuid('plan_assignee_id').references(() => users.id),
+    /** 상품 등록 담당 (Step 6) */
+    listing_assignee_id: uuid('listing_assignee_id').references(() => users.id),
+    /** 로켓 입점 담당 (Step 8) */
+    rocket_assignee_id: uuid('rocket_assignee_id').references(() => users.id),
 
     // 메타
     thumbnail_url: text('thumbnail_url'),

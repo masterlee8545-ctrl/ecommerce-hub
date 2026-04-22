@@ -11,6 +11,7 @@
 import {
   BarChart3,
   Building2,
+  Link2,
   Mail,
   Settings,
   Shield,
@@ -18,14 +19,19 @@ import {
   Users,
 } from 'lucide-react';
 
+import { ItemScoutTokenForm } from '@/components/settings/itemscout-token-form';
 import { requireCompanyContext } from '@/lib/auth/session';
 import { getDashboardStats } from '@/lib/dashboard/stats';
+import { hasItemScoutToken } from '@/lib/itemscout/client';
 
 export const dynamic = 'force-dynamic';
 
 export default async function SettingsPage() {
   const ctx = await requireCompanyContext();
-  const stats = await getDashboardStats(ctx.companyId);
+  const [stats, isItemScoutConnected] = await Promise.all([
+    getDashboardStats(ctx.companyId),
+    hasItemScoutToken(),
+  ]);
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
@@ -105,6 +111,26 @@ export default async function SettingsPage() {
         <div className="mt-3 flex items-center gap-4 text-xs text-navy-500">
           <span>미해결 작업: <strong className="text-navy-700">{stats.openTasks}건</strong></span>
           <span>미읽은 알림: <strong className="text-navy-700">{stats.unreadNotifications}건</strong></span>
+        </div>
+      </section>
+
+      {/* 아이템 스카우트 연결 */}
+      <section className="rounded-lg border border-navy-200 bg-white p-5">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-navy-900">
+          <Link2 className="h-4 w-4 text-teal-600" />
+          아이템 스카우트 연결
+        </h2>
+        <p className="mt-1 text-xs text-navy-500">
+          아이템스카우트에서 카테고리/키워드 데이터를 가져오려면 토큰이 필요합니다.
+        </p>
+        <div className="mt-3">
+          <ItemScoutTokenForm isConnected={isItemScoutConnected} />
+        </div>
+        <div className="mt-2 rounded-md bg-navy-50/50 p-3">
+          <p className="text-[11px] text-navy-500">
+            <strong className="text-navy-700">토큰 가져오는 방법:</strong>{' '}
+            itemscout.io에 로그인 → 개발자 도구(F12) → Application → Cookies → i_token 값 복사
+          </p>
         </div>
       </section>
 

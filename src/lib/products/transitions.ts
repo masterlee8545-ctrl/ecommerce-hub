@@ -20,10 +20,10 @@
  * - .onConflictDoNothing()으로 중복 INSERT 시 silently 무시
  * - returning() 행 개수로 실제 생성된 task 수 측정 가능
  */
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNotNull } from 'drizzle-orm';
 
 import { withCompanyContext } from '@/db';
-import { products, productStateHistory, tasks, type NewTask } from '@/db/schema';
+import { products, productStateHistory, purchaseOrders, tasks, type NewTask } from '@/db/schema';
 
 import {
   buildTransitionIdempotencyKey,
@@ -153,6 +153,30 @@ export async function transitionProductStatus(
 
     // ─── 2. 전이 허용 여부 검증 ───
     validateTransitionAllowed(fromStatus, toStatus);
+
+    // ─── 2-b. Step 8 — listing → active (로켓 입점) 는 수입 입고 확인 필수 ───
+    // "수입한게 와야지 입점하는거야" — purchase_orders.received_at IS NOT NULL
+    if (fromStatus === 'listing' && toStatus === 'active') {
+      const receivedRows = await tx
+        .select({ id: purchaseOrders.id, receivedAt: purchaseOrders.received_at })
+        .from(purchaseOrders)
+        .where(
+          and(
+            eq(purchaseOrders.product_id, input.productId),
+            eq(purchaseOrders.company_id, input.companyId),
+            isNotNull(purchaseOrders.received_at),
+          ),
+        )
+        .limit(1);
+
+      if (receivedRows.length === 0) {
+        throw new Error(
+          '[transitionProductStatus] 수입 입고가 확인된 발주가 없습니다. ' +
+            '로켓 입점(active)은 purchase_orders.received_at 이 채워져야 진행 가능합니다. ' +
+            '발주 상태를 "received"로 표시하고 received_at 을 기록한 뒤 다시 시도하세요.',
+        );
+      }
+    }
 
     // ─── 3. products.status 업데이트 ───
     const now = new Date();

@@ -3,11 +3,13 @@
 import { AlertTriangle } from 'lucide-react';
 
 export default function ErrorPage({
+  error,
   reset,
 }: {
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  console.error('[ErrorBoundary]', error);
   return (
     <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 text-center">
       <div className="flex h-16 w-16 items-center justify-center rounded-full bg-red-50">

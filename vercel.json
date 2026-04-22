@@ -1,0 +1,24 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "next build",
+  "installCommand": "npm install",
+  "regions": ["icn1"],
+  "functions": {
+    "src/app/api/research/coupang-first-page/scrape/route.ts": {
+      "maxDuration": 10
+    },
+    "src/app/api/batch-jobs/route.ts": {
+      "maxDuration": 15
+    },
+    "src/app/api/batch-jobs/[batchId]/route.ts": {
+      "maxDuration": 10
+    },
+    "src/app/api/itemscout/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/research/coupang-reviews/analyze/route.ts": {
+      "maxDuration": 60
+    }
+  }
+}

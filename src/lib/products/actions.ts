@@ -28,6 +28,7 @@ import { requireCompanyContext } from '@/lib/auth/session';
 import { type ProductActionState, type ProductFieldKey } from './action-types';
 import { CONFIDENCE_LEVELS, PIPELINE_STAGES, type ConfidenceLevel, type PipelineStage } from './constants';
 import { createProduct, updateProduct, suggestNextProductCode } from './mutations';
+import { upsertPlan, type PlanSection } from './plans';
 import { transitionProductStatus } from './transitions';
 
 // ─────────────────────────────────────────────────────────
@@ -290,7 +291,7 @@ export async function transitionProductStatusAction(form: FormData): Promise<voi
   revalidatePath(`/products/${productId}`);
   revalidatePath('/tasks'); //                          자동 생성된 task가 작업 목록에 반영되도록
   revalidatePath('/'); //                               대시보드 카운터 업데이트
-  redirect(`/products/${productId}`);
+  redirect(`/products/${productId}?flash=transitioned`);
 }
 
 // ─────────────────────────────────────────────────────────
@@ -301,11 +302,18 @@ export async function transitionProductStatusAction(form: FormData): Promise<voi
  * research 페이지 장바구니에서 호출.
  * 이름만으로 빠르게 상품 등록 (코드 자동 생성, status = 'research').
  * sourceUrl, memo는 description에 저장.
+ *
+ * 법인 선택(Option B):
+ * - 폼에 `targetCompanyId` 가 있고 사용자가 그 법인 멤버면 그 법인에 담음
+ * - 없거나 맞지 않으면 active company 에 담음 (backward compat)
  */
 export async function quickAddToBasketAction(form: FormData): Promise<void> {
   const name = getStringField(form, 'name').trim();
   const sourceUrl = getOptionalStringField(form, 'sourceUrl');
+  const cnSourceUrl = getOptionalStringField(form, 'cnSourceUrl');
   const memo = getOptionalStringField(form, 'memo');
+  const targetCompanyIdRaw = getOptionalStringField(form, 'targetCompanyId');
+  const redirectToRaw = getOptionalStringField(form, 'redirectTo');
 
   if (name.length === 0) {
     throw new Error('상품 이름을 입력해주세요.');
@@ -313,10 +321,20 @@ export async function quickAddToBasketAction(form: FormData): Promise<void> {
 
   const ctx = await requireCompanyContext();
 
-  // 코드 자동 생성
+  // 대상 법인 결정 — 멤버십 검증으로 무단 전환 차단 (P-4)
+  let targetCompanyId = ctx.companyId;
+  if (targetCompanyIdRaw && targetCompanyIdRaw !== ctx.companyId) {
+    const isMember = ctx.memberships.some((m) => m.companyId === targetCompanyIdRaw);
+    if (!isMember) {
+      throw new Error('해당 법인에 접근 권한이 없습니다.');
+    }
+    targetCompanyId = targetCompanyIdRaw;
+  }
+
+  // 코드 자동 생성 (대상 법인 기준)
   let code: string;
   try {
-    code = await suggestNextProductCode(ctx.companyId);
+    code = await suggestNextProductCode(targetCompanyId);
   } catch {
     // DB 미준비 시 timestamp 기반 폴백
     code = `PROD-${Date.now()}`;
@@ -330,10 +348,11 @@ export async function quickAddToBasketAction(form: FormData): Promise<void> {
 
   try {
     await createProduct({
-      companyId: ctx.companyId,
+      companyId: targetCompanyId,
       code,
       name,
       description,
+      cnSourceUrl,
       createdBy: ctx.userId,
       ownerUserId: ctx.userId,
     });
@@ -349,11 +368,212 @@ export async function quickAddToBasketAction(form: FormData): Promise<void> {
   revalidatePath('/research');
   revalidatePath('/products');
   revalidatePath('/');
+
+  // 담기 후 자동 이동 (선택) — 내부 경로만 허용 (open redirect 방지)
+  if (redirectToRaw && redirectToRaw.startsWith('/')) {
+    redirect(redirectToRaw);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+// 액션 — 배치 장바구니 담기 (Batch Analysis 결과 → 다수 한 번에)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * 키워드 배열을 받아 한 번에 장바구니에 담는다.
+ *
+ * 폼 필드:
+ * - keywords (반복) — 담을 키워드 이름들
+ * - targetCompanyId (선택) — 멤버십 검증 후 해당 법인
+ * - memoPrefix (선택) — 각 상품 memo 앞에 붙일 공통 문자 (예: "배치 분석 통과")
+ *
+ * 멱등성: 같은 법인에 같은 이름으로 이미 있는 상품은 스킵.
+ */
+export async function bulkAddToBasketAction(form: FormData): Promise<void> {
+  const raw = form.getAll('keywords');
+  const keywords = raw
+    .map((v) => (typeof v === 'string' ? v.trim() : ''))
+    .filter((v) => v.length > 0);
+  const targetCompanyIdRaw = getOptionalStringField(form, 'targetCompanyId');
+  const memoPrefix = getOptionalStringField(form, 'memoPrefix');
+
+  if (keywords.length === 0) {
+    throw new Error('담을 키워드가 없습니다.');
+  }
+
+  const ctx = await requireCompanyContext();
+
+  let targetCompanyId = ctx.companyId;
+  if (targetCompanyIdRaw && targetCompanyIdRaw !== ctx.companyId) {
+    const isMember = ctx.memberships.some((m) => m.companyId === targetCompanyIdRaw);
+    if (!isMember) throw new Error('해당 법인에 접근 권한이 없습니다.');
+    targetCompanyId = targetCompanyIdRaw;
+  }
+
+  // 순차 생성 — 코드 suggestion 이 DB 조회하므로 병렬하면 같은 코드 충돌
+  const createdCount: { ok: number; skipped: number; failed: number } = {
+    ok: 0,
+    skipped: 0,
+    failed: 0,
+  };
+  for (const name of keywords) {
+    try {
+      const RADIX_ALPHANUM = 36;
+      const RANDOM_SUFFIX_LEN = 6;
+      const code = await suggestNextProductCode(targetCompanyId).catch(
+        () =>
+          `PROD-${Date.now()}-${Math.random()
+            .toString(RADIX_ALPHANUM)
+            .slice(2, 2 + RANDOM_SUFFIX_LEN - 2)}`,
+      );
+      const description = memoPrefix ?? null;
+      await createProduct({
+        companyId: targetCompanyId,
+        code,
+        name,
+        description,
+        createdBy: ctx.userId,
+        ownerUserId: ctx.userId,
+      });
+      createdCount.ok += 1;
+    } catch (err) {
+      // UNIQUE 충돌 (이미 같은 code) → skip, 그 외는 failed
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('unique') || msg.includes('duplicate')) {
+        createdCount.skipped += 1;
+      } else {
+        console.error('[bulkAddToBasketAction] 개별 실패:', err);
+        createdCount.failed += 1;
+      }
+    }
+  }
+
+  revalidatePath('/research');
+  revalidatePath('/products');
+  revalidatePath('/');
+  redirect(
+    `/research?flash=bulk-added:${createdCount.ok},${createdCount.skipped},${createdCount.failed}`,
+  );
 }
 
 // ─────────────────────────────────────────────────────────
 // 액션 — 가격 정보 저장 (계산기에서 호출)
 // ─────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────
+// 액션 — 워크플로우 필드 저장 (Step 3 + 5)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * 상품의 1688 링크 + 담당자 3명 배정 저장.
+ * WorkflowPanel 컴포넌트에서 호출.
+ *
+ * 폼 필드:
+ * - productId
+ * - cnSourceUrl (선택, 빈 문자열 → null)
+ * - planAssigneeId / listingAssigneeId / rocketAssigneeId (선택, 빈 문자열 → null)
+ */
+export async function updateWorkflowAction(form: FormData): Promise<void> {
+  const productId = getStringField(form, 'productId').trim();
+  if (!productId) throw new Error('상품 ID가 없습니다.');
+
+  const cnSourceUrl = getOptionalStringField(form, 'cnSourceUrl');
+  const planAssigneeIdRaw = getOptionalStringField(form, 'planAssigneeId');
+  const listingAssigneeIdRaw = getOptionalStringField(form, 'listingAssigneeId');
+  const rocketAssigneeIdRaw = getOptionalStringField(form, 'rocketAssigneeId');
+
+  const ctx = await requireCompanyContext();
+
+  try {
+    await updateProduct({
+      companyId: ctx.companyId,
+      productId,
+      cnSourceUrl,
+      planAssigneeId: planAssigneeIdRaw,
+      listingAssigneeId: listingAssigneeIdRaw,
+      rocketAssigneeId: rocketAssigneeIdRaw,
+    });
+  } catch (err) {
+    console.error('[updateWorkflowAction] 저장 실패:', err);
+    throw new Error(
+      err instanceof Error
+        ? `저장 실패: ${err.message}`
+        : '저장 중 오류가 발생했습니다.',
+    );
+  }
+
+  revalidatePath(`/products/${productId}`);
+  redirect(`/products/${productId}?flash=workflow-saved`);
+}
+
+// ─────────────────────────────────────────────────────────
+// 액션 — 기획서 저장 (Step 4)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * 상세페이지 기획서 upsert.
+ * /products/[id]/plan 폼에서 호출.
+ *
+ * 폼 필드:
+ * - productId
+ * - hookSummary, targetAudience, notes (텍스트)
+ * - sectionsJson (JSON 문자열 — 섹션 배열)
+ * - resultConfidence ('estimated' | 'edited' | 'confirmed')
+ */
+export async function savePlanAction(form: FormData): Promise<void> {
+  const productId = getStringField(form, 'productId').trim();
+  if (!productId) throw new Error('상품 ID가 없습니다.');
+
+  const hookSummary = getOptionalStringField(form, 'hookSummary');
+  const targetAudience = getOptionalStringField(form, 'targetAudience');
+  const notes = getOptionalStringField(form, 'notes');
+  const sectionsJsonRaw = getStringField(form, 'sectionsJson').trim();
+  const confidenceRaw = getStringField(form, 'resultConfidence').trim();
+
+  // 섹션 JSON 파싱 — 실패하면 비어있는 배열로 처리 (부분 저장 허용)
+  let sections: PlanSection[] = [];
+  if (sectionsJsonRaw.length > 0) {
+    try {
+      const parsed: unknown = JSON.parse(sectionsJsonRaw);
+      if (Array.isArray(parsed)) {
+        sections = parsed as PlanSection[];
+      }
+    } catch {
+      throw new Error('섹션 JSON 형식이 올바르지 않습니다. JSON 배열이어야 합니다.');
+    }
+  }
+
+  const resultConfidence =
+    confidenceRaw === 'edited' || confidenceRaw === 'confirmed'
+      ? confidenceRaw
+      : 'estimated';
+
+  const ctx = await requireCompanyContext();
+
+  try {
+    await upsertPlan({
+      companyId: ctx.companyId,
+      productId,
+      userId: ctx.userId,
+      sections,
+      hookSummary,
+      targetAudience,
+      notes,
+      resultConfidence,
+    });
+  } catch (err) {
+    console.error('[savePlanAction] 저장 실패:', err);
+    throw new Error(
+      err instanceof Error
+        ? `기획서 저장 실패: ${err.message}`
+        : '기획서 저장 중 오류가 발생했습니다.',
+    );
+  }
+
+  revalidatePath(`/products/${productId}`);
+  revalidatePath(`/products/${productId}/plan`);
+  redirect(`/products/${productId}/plan?flash=plan-saved`);
+}
 
 /**
  * 원가/판매가/마진율을 상품에 저장.

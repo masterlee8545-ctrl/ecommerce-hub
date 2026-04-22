@@ -1,11 +1,12 @@
 /**
- * /research — 상품 발굴 (장바구니 + 검증 도구)
+ * /research — 상품 발굴 (아이템스카우트 카테고리 + 장바구니 + 검증 도구)
  *
  * 헌법: CLAUDE.md §1 P-1 (빈 결과 명시), §1 P-4 (멀티테넌트),
  *       §1 P-9 (사용자 친화 한국어)
  *
  * 역할:
- * - 아이템 스카우트 등에서 찾은 상품을 빠르게 장바구니에 담기
+ * - 아이템 스카우트 카테고리에서 상품을 탐색하고 장바구니에 담기
+ * - 수동 추가 폼 (이름/URL/메모)
  * - 장바구니 목록 확인 + 검증 후 "수입 의뢰"로 넘기기
  * - 쿠팡 리뷰 분석 등 검증 도구 바로가기
  */
@@ -13,6 +14,7 @@ import Link from 'next/link';
 
 import {
   ArrowRight,
+  BarChart3,
   ExternalLink,
   FileSearch,
   Plus,
@@ -21,6 +23,8 @@ import {
   Sparkles,
 } from 'lucide-react';
 
+import { ItemScoutBrowser } from '@/components/research/itemscout-browser';
+import { listCompaniesForUser, type CompanyWithRole } from '@/lib/auth/company';
 import { requireCompanyContext } from '@/lib/auth/session';
 import { quickAddToBasketAction, transitionProductStatusAction } from '@/lib/products/actions';
 import { listProducts } from '@/lib/products/queries';
@@ -29,10 +33,21 @@ export const dynamic = 'force-dynamic';
 
 const BASKET_LIMIT = 50;
 
+// 법인 배지 색상 (CompanySwitcher 와 톤 맞춤, 라벨은 회사명 그대로)
+const BUSINESS_TYPE_COLOR: Record<CompanyWithRole['businessType'], string> = {
+  industrial: 'bg-blue-50 text-blue-700 border-blue-200',
+  agricultural: 'bg-green-50 text-green-700 border-green-200',
+  other: 'bg-navy-50 text-navy-700 border-navy-200',
+};
+
 export default async function ResearchPage() {
   const ctx = await requireCompanyContext();
 
-  // research 단계 상품 = 장바구니
+  // 사용자가 속한 법인 목록 — "어느 법인에 담을지" 드롭다운용
+  const userCompanies = await listCompaniesForUser(ctx.userId);
+  const activeCompany = userCompanies.find((c) => c.id === ctx.companyId);
+
+  // research 단계 상품 = 장바구니 (현재 활성 법인만 — RLS)
   let basketItems: Awaited<ReturnType<typeof listProducts>> = [];
   let dbError: string | null = null;
   try {
@@ -97,6 +112,18 @@ export default async function ResearchPage() {
             </div>
           </div>
           <div>
+            <label htmlFor="cnSourceUrl" className="block text-xs font-semibold text-navy-700">
+              1688 / 타오바오 링크 (선택 — 수입업체 인계용)
+            </label>
+            <input
+              type="url"
+              id="cnSourceUrl"
+              name="cnSourceUrl"
+              placeholder="https://detail.1688.com/offer/... 또는 타오바오/알리바바 URL"
+              className="mt-1 block w-full rounded-md border border-navy-200 bg-white px-3 py-2 text-sm text-navy-900 placeholder-navy-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+            />
+          </div>
+          <div>
             <label htmlFor="memo" className="block text-xs font-semibold text-navy-700">
               메모 (선택)
             </label>
@@ -108,6 +135,30 @@ export default async function ResearchPage() {
               className="mt-1 block w-full rounded-md border border-navy-200 bg-white px-3 py-2 text-sm text-navy-900 placeholder-navy-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
             />
           </div>
+          {/* 담을 법인 선택 — 멤버십이 2개 이상일 때만 드롭다운 표시 */}
+          {userCompanies.length > 1 && (
+            <div>
+              <label htmlFor="targetCompanyId" className="block text-xs font-semibold text-navy-700">
+                담을 법인
+              </label>
+              <select
+                id="targetCompanyId"
+                name="targetCompanyId"
+                defaultValue={ctx.companyId}
+                className="mt-1 block w-full rounded-md border border-navy-200 bg-white px-3 py-2 text-sm text-navy-900 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+              >
+                {userCompanies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                    {c.id === ctx.companyId ? ' (현재)' : ''}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-navy-500">
+                기본값: 현재 활성 법인. 다른 법인 선택 시 그 법인에 담깁니다.
+              </p>
+            </div>
+          )}
           <button
             type="submit"
             className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
@@ -118,12 +169,35 @@ export default async function ResearchPage() {
         </form>
       </section>
 
+      {/* 아이템 스카우트 카테고리 탐색 */}
+      <ItemScoutBrowser
+        addToBasketAction={quickAddToBasketAction}
+        userCompanies={userCompanies.map((c) => ({
+          id: c.id,
+          name: c.name,
+          businessType: c.businessType,
+        }))}
+        activeCompanyId={ctx.companyId}
+      />
+
       {/* 장바구니 목록 */}
       <section>
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-navy-500">
-            장바구니 ({basketItems.length}개)
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-navy-500">
+              장바구니 ({basketItems.length}개)
+            </h2>
+            {activeCompany && (
+              <span
+                className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${
+                  BUSINESS_TYPE_COLOR[activeCompany.businessType]
+                }`}
+                title={`현재 법인: ${activeCompany.name}`}
+              >
+                {activeCompany.name}
+              </span>
+            )}
+          </div>
           {basketItems.length > 0 && (
             <Link
               href="/products?stage=research"
@@ -133,6 +207,11 @@ export default async function ResearchPage() {
             </Link>
           )}
         </div>
+        {userCompanies.length > 1 && (
+          <p className="mb-2 text-[11px] text-navy-400">
+            💡 장바구니는 현재 법인 기준입니다. 다른 법인 장바구니는 상단 헤더 법인 전환으로 확인하세요.
+          </p>
+        )}
 
         {dbError ? (
           <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4 text-sm text-amber-800">
@@ -167,7 +246,21 @@ export default async function ResearchPage() {
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-navy-500">
           검증 도구
         </h2>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <Link
+            href="/research/coupang-first-page"
+            className="flex items-center gap-3 rounded-lg border border-navy-200 bg-white p-4 transition hover:border-teal-300 hover:shadow-sm"
+          >
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50">
+              <BarChart3 className="h-5 w-5 text-blue-700" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-navy-900">1페이지 메트릭</div>
+              <div className="text-xs text-navy-500">
+                상위 20개 리뷰수·로켓비율 조회
+              </div>
+            </div>
+          </Link>
           <Link
             href="/research/coupang-reviews"
             className="flex items-center gap-3 rounded-lg border border-navy-200 bg-white p-4 transition hover:border-teal-300 hover:shadow-sm"
@@ -178,7 +271,7 @@ export default async function ResearchPage() {
             <div>
               <div className="text-sm font-semibold text-navy-900">쿠팡 리뷰 분석</div>
               <div className="text-xs text-navy-500">
-                1페이지 리뷰를 분석해 진입 가능성 확인
+                리뷰 텍스트 AI 감성 분석
               </div>
             </div>
           </Link>
@@ -189,7 +282,7 @@ export default async function ResearchPage() {
             <div>
               <div className="text-sm font-semibold text-navy-500">디자인 특허 확인</div>
               <div className="text-xs text-navy-400">
-                키프리스 조회 기능 (준비중)
+                키프리스 조회 (준비중)
               </div>
             </div>
           </div>

@@ -56,9 +56,17 @@ export interface CreateProductInput {
   marginRateConfidence?: ConfidenceLevel | undefined;
   /** 주 공급사 (선택) */
   primarySupplierId?: string | null | undefined;
+  /** 1688/타오바오 소스 URL (수입업체 인계용) */
+  cnSourceUrl?: string | null | undefined;
   /** 등록자 (선택) */
   createdBy?: string | null | undefined;
   ownerUserId?: string | null | undefined;
+  /** 상세페이지 기획 담당 (Step 4) */
+  planAssigneeId?: string | null | undefined;
+  /** 상품 등록 담당 (Step 6) */
+  listingAssigneeId?: string | null | undefined;
+  /** 로켓 입점 담당 (Step 8) */
+  rocketAssigneeId?: string | null | undefined;
 }
 
 export interface UpdateProductInput {
@@ -73,7 +81,11 @@ export interface UpdateProductInput {
   marginRate?: number | null | undefined;
   marginRateConfidence?: ConfidenceLevel | undefined;
   primarySupplierId?: string | null | undefined;
+  cnSourceUrl?: string | null | undefined;
   ownerUserId?: string | null | undefined;
+  planAssigneeId?: string | null | undefined;
+  listingAssigneeId?: string | null | undefined;
+  rocketAssigneeId?: string | null | undefined;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -162,7 +174,11 @@ export async function createProduct(input: CreateProductInput): Promise<{ id: st
       input.marginRate !== null && input.marginRate !== undefined ? String(input.marginRate) : null,
     margin_rate_confidence: marginRateConfidence,
     primary_supplier_id: input.primarySupplierId ?? null,
+    cn_source_url: input.cnSourceUrl?.trim() || null,
     owner_user_id: input.ownerUserId ?? null,
+    plan_assignee_id: input.planAssigneeId ?? null,
+    listing_assignee_id: input.listingAssigneeId ?? null,
+    rocket_assignee_id: input.rocketAssigneeId ?? null,
     created_by: input.createdBy ?? null,
   };
 
@@ -225,8 +241,20 @@ export async function updateProduct(input: UpdateProductInput): Promise<void> {
   if (input.primarySupplierId !== undefined) {
     patch.primary_supplier_id = input.primarySupplierId;
   }
+  if (input.cnSourceUrl !== undefined) {
+    patch.cn_source_url = input.cnSourceUrl?.trim() || null;
+  }
   if (input.ownerUserId !== undefined) {
     patch.owner_user_id = input.ownerUserId;
+  }
+  if (input.planAssigneeId !== undefined) {
+    patch.plan_assignee_id = input.planAssigneeId;
+  }
+  if (input.listingAssigneeId !== undefined) {
+    patch.listing_assignee_id = input.listingAssigneeId;
+  }
+  if (input.rocketAssigneeId !== undefined) {
+    patch.rocket_assignee_id = input.rocketAssigneeId;
   }
 
   await withCompanyContext(input.companyId, async (tx) => {
