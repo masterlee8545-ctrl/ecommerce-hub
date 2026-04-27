@@ -13,9 +13,7 @@
 import Link from 'next/link';
 
 import {
-  ArrowRight,
   BarChart3,
-  ExternalLink,
   FileSearch,
   Plus,
   Search,
@@ -23,11 +21,13 @@ import {
   Sparkles,
 } from 'lucide-react';
 
-import { ItemScoutBrowser } from '@/components/research/itemscout-browser';
 import { listCompaniesForUser, type CompanyWithRole } from '@/lib/auth/company';
 import { requireCompanyContext } from '@/lib/auth/session';
-import { quickAddToBasketAction, transitionProductStatusAction } from '@/lib/products/actions';
+import { quickAddToBasketAction } from '@/lib/products/actions';
 import { listProducts } from '@/lib/products/queries';
+
+import { BasketList } from './basket-list';
+import { SelloBrowser } from './sello/sello-browser';
 
 export const dynamic = 'force-dynamic';
 
@@ -169,19 +169,25 @@ export default async function ResearchPage() {
         </form>
       </section>
 
-      {/* 아이템 스카우트 카테고리 탐색 */}
-      <ItemScoutBrowser
-        addToBasketAction={quickAddToBasketAction}
-        userCompanies={userCompanies.map((c) => ({
-          id: c.id,
-          name: c.name,
-          businessType: c.businessType,
-        }))}
-        activeCompanyId={ctx.companyId}
-      />
+      {/* 🆕 셀록홈즈 카테고리 소싱 — 네이버 검색량 + 쿠팡 리뷰 + 경쟁률 통합 */}
+      <section>
+        <div className="mb-3 flex items-center gap-2">
+          <Sparkles className="h-5 w-5 text-violet-600" />
+          <h2 className="text-base font-bold text-navy-900">
+            셀록홈즈 카테고리 소싱
+          </h2>
+          <span className="rounded bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">
+            BETA
+          </span>
+        </div>
+        <SelloBrowser
+          targetCompanyId={ctx.companyId}
+          userCompanies={userCompanies.map((c) => ({ id: c.id, name: c.name }))}
+        />
+      </section>
 
       {/* 장바구니 목록 */}
-      <section>
+      <section data-basket-anchor>
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-navy-500">
@@ -217,27 +223,17 @@ export default async function ResearchPage() {
           <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4 text-sm text-amber-800">
             <div className="font-semibold">장바구니를 불러올 수 없습니다</div>
             <p className="mt-1 text-xs">{dbError}</p>
-            <p className="mt-2 text-[11px] text-amber-700">
-              DB 연결을 확인하세요. (`npm run db:push`)
-            </p>
-          </div>
-        ) : basketItems.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-navy-200 bg-navy-50/30 p-8 text-center">
-            <ShoppingCart className="mx-auto h-10 w-10 text-navy-300" />
-            <h3 className="mt-3 text-base font-semibold text-navy-700">
-              장바구니가 비어있습니다
-            </h3>
-            <p className="mt-1 text-xs text-navy-500">
-              위 폼에서 상품을 추가하면 여기에 표시됩니다.
-              아이템 스카우트에서 찾은 상품 이름을 넣어보세요.
-            </p>
           </div>
         ) : (
-          <ul className="space-y-2">
-            {basketItems.map((item) => (
-              <BasketCard key={item.id} item={item} />
-            ))}
-          </ul>
+          <BasketList
+            items={basketItems.map((i) => ({
+              id: i.id,
+              code: i.code,
+              name: i.name,
+              description: i.description,
+              created_at: i.created_at,
+            }))}
+          />
         )}
       </section>
 
@@ -292,82 +288,3 @@ export default async function ResearchPage() {
   );
 }
 
-// ─────────────────────────────────────────────────────────
-// 장바구니 카드
-// ─────────────────────────────────────────────────────────
-
-interface BasketCardProps {
-  item: Awaited<ReturnType<typeof listProducts>>[number];
-}
-
-function BasketCard({ item }: BasketCardProps) {
-  // description에서 소스 URL 추출
-  const lines = (item.description ?? '').split('\n');
-  const sourceLine = lines.find((l) => l.startsWith('소스: '));
-  const sourceUrl = sourceLine ? sourceLine.replace('소스: ', '').trim() : null;
-  const memo = lines.filter((l) => !l.startsWith('소스: ')).join(' ').trim();
-
-  return (
-    <li className="rounded-lg border border-navy-200 bg-white p-4 transition hover:border-teal-300">
-      <div className="flex items-start justify-between gap-4">
-        {/* 좌: 상품 정보 */}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <Link
-              href={`/products/${item.id}`}
-              className="text-sm font-semibold text-navy-900 hover:text-teal-700"
-            >
-              {item.name}
-            </Link>
-            <span className="rounded bg-navy-100 px-1.5 py-0.5 text-[10px] font-mono text-navy-500">
-              {item.code}
-            </span>
-          </div>
-          {sourceUrl && (
-            <a
-              href={sourceUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1 inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
-            >
-              <ExternalLink className="h-3 w-3" />
-              소스 링크
-            </a>
-          )}
-          {memo && (
-            <p className="mt-1 text-xs text-navy-500">{memo}</p>
-          )}
-          <div className="mt-1 text-[10px] text-navy-400">
-            {formatDate(item.created_at)}
-          </div>
-        </div>
-
-        {/* 우: 수입 의뢰로 넘기기 버튼 */}
-        <form action={transitionProductStatusAction}>
-          <input type="hidden" name="productId" value={item.id} />
-          <input type="hidden" name="toStatus" value="sourcing" />
-          <button
-            type="submit"
-            className="inline-flex items-center gap-1.5 rounded-md border border-yellow-300 bg-yellow-50 px-3 py-1.5 text-xs font-semibold text-yellow-700 transition hover:bg-yellow-100"
-          >
-            수입 의뢰로
-            <ArrowRight className="h-3 w-3" />
-          </button>
-        </form>
-      </div>
-    </li>
-  );
-}
-
-function formatDate(date: Date): string {
-  try {
-    return date.toLocaleDateString('ko-KR', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return String(date);
-  }
-}

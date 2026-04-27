@@ -153,6 +153,10 @@ export function BatchAnalysisForm({
   const searchParams = useSearchParams();
   const urlBatchId = searchParams.get('batchId');
   const keywordsParam = searchParams.get('keywords') ?? '';
+  // URL 쿼리에서 쿠팡 조건 prefill (/research 원클릭 진입 시)
+  const urlReview = searchParams.get('review');
+  const urlRatio = searchParams.get('ratio'); // % 단위 (예: 60)
+  const urlAutoStart = searchParams.get('auto') === '1';
 
   const initialKeywords = useMemo(
     () =>
@@ -163,8 +167,17 @@ export function BatchAnalysisForm({
     [keywordsParam],
   );
 
-  // ── 조건 상태 ──
-  const [cond, setCond] = useState<BatchFilterCondition>(DEFAULT_BATCH_CONDITION);
+  // ── 조건 상태 ── URL 쿼리가 있으면 해당 값으로 prefill
+  const [cond, setCond] = useState<BatchFilterCondition>(() => {
+    const prefilled = { ...DEFAULT_BATCH_CONDITION };
+    if (urlReview !== null && Number.isFinite(Number(urlReview))) {
+      prefilled.reviewThreshold = Math.max(0, Number(urlReview));
+    }
+    if (urlRatio !== null && Number.isFinite(Number(urlRatio))) {
+      prefilled.minBelowReviewRatio = Math.max(0, Math.min(100, Number(urlRatio))) / 100;
+    }
+    return prefilled;
+  });
   const [ignoreCache, setIgnoreCache] = useState(false);
   const [earlyStopAt, setEarlyStopAt] = useState<number | null>(null);
   const [selectedCompanyId, setSelectedCompanyId] = useState(targetCompanyId);
@@ -188,6 +201,16 @@ export function BatchAnalysisForm({
   const [enqueuing, setEnqueuing] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [lastPolledAt, setLastPolledAt] = useState<Date | null>(null);
+  // 직접 입력 키워드 (URL 쿼리가 없을 때 사용)
+  const [directKeywordsText, setDirectKeywordsText] = useState('');
+  // "N초 전" 을 1초마다 갱신하기 위한 틱 카운터 (폴링 중에만)
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (!batchId) return;
+    const t = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [batchId]);
 
   // 카운트
   const passedCount = items.filter((i) => i.filterResult?.passed === true).length;
@@ -201,11 +224,20 @@ export function BatchAnalysisForm({
     items.some((i) => i.status === 'pending' || i.status === 'running')
   );
 
+  // 유효한 키워드 계산 — URL 쿼리 우선, 없으면 textarea 에서
+  const effectiveKeywords = useMemo(() => {
+    if (initialKeywords.length > 0) return initialKeywords;
+    return directKeywordsText
+      .split(/[\n,]/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  }, [initialKeywords, directKeywordsText]);
+
   // ── 시작: POST /api/batch-jobs ──
   const start = useCallback(async () => {
     if (enqueuing || running) return;
-    if (initialKeywords.length === 0) {
-      setServerError('키워드가 없습니다.');
+    if (effectiveKeywords.length === 0) {
+      setServerError('분석할 키워드를 한 개 이상 입력하세요.');
       return;
     }
     setEnqueuing(true);
@@ -216,7 +248,7 @@ export function BatchAnalysisForm({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          keywords: initialKeywords,
+          keywords: effectiveKeywords,
           filterCond: cond,
           forceFresh: ignoreCache,
         }),
@@ -239,7 +271,18 @@ export function BatchAnalysisForm({
     } finally {
       setEnqueuing(false);
     }
-  }, [enqueuing, running, initialKeywords, cond, ignoreCache]);
+  }, [enqueuing, running, effectiveKeywords, cond, ignoreCache]);
+
+  // ── 자동 시작: URL 쿼리 auto=1 이면 마운트 후 한 번만 start() ──
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (!urlAutoStart) return;
+    if (autoStartedRef.current) return;
+    if (batchId) return; // 이미 배치 진행 중
+    if (initialKeywords.length === 0) return;
+    autoStartedRef.current = true;
+    void start();
+  }, [urlAutoStart, batchId, initialKeywords.length, start]);
 
   // ── 중단: DELETE /api/batch-jobs/:id (pending 만 cancelled) ──
   const stop = useCallback(async () => {
@@ -298,6 +341,7 @@ export function BatchAnalysisForm({
           };
         });
         setItems(mapped);
+        setLastPolledAt(new Date());
 
         // 조기 종료 체크 — 통과 개수 도달하면 나머지 pending 취소
         if (
@@ -309,6 +353,9 @@ export function BatchAnalysisForm({
         }
       } catch (err) {
         console.error('[batch] 폴링 에러:', err);
+        setServerError(
+          err instanceof Error ? `상태 갱신 실패: ${err.message}` : '상태 갱신 실패',
+        );
       }
       // 완료된 경우 폴링 중단 (pending·running 0개)
     }
@@ -323,9 +370,10 @@ export function BatchAnalysisForm({
     };
   }, [batchId, cond, earlyStopAt]);
 
-  // 자동 폴링 중단: pending·running 이 0 이면 3번 더 돌고 stop
+  // 자동 폴링 중단: items 가 들어온 후에만 판정 (빈 배열은 아직 첫 응답 전)
   useEffect(() => {
     if (!batchId) return;
+    if (items.length === 0) return; // ← 첫 폴링 응답 기다리는 중
     const stillActive = items.some(
       (i) => i.status === 'pending' || i.status === 'running',
     );
@@ -335,14 +383,8 @@ export function BatchAnalysisForm({
     }
   }, [batchId, items]);
 
-  // ── 초기 상태 가드 ──
-  if (initialKeywords.length === 0 && !batchId) {
-    return (
-      <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-base text-amber-800">
-        분석할 키워드가 없습니다. 리서치 페이지에서 키워드를 먼저 선택하세요.
-      </div>
-    );
-  }
+  // 키워드 소스 표시 (url 쿼리 vs 직접 입력)
+  const usingDirectInput = initialKeywords.length === 0 && !batchId;
 
   // 워커 동작 확인 — 5분 이상 pending 이 있으면 경고
   const hasStaleRunning = items.some((i) => {
@@ -364,6 +406,28 @@ export function BatchAnalysisForm({
 
   return (
     <div className="space-y-6">
+      {/* 키워드 입력 섹션 (URL 에 keywords 쿼리 없을 때만 노출) */}
+      {usingDirectInput && (
+        <section className="rounded-xl border border-blue-200 bg-white p-6 shadow-sm">
+          <h2 className="mb-2 text-lg font-bold text-navy-900">분석할 키워드 입력</h2>
+          <p className="mb-3 text-sm leading-relaxed text-navy-600">
+            쿠팡 1페이지 분석할 키워드를 <strong>줄바꿈</strong> 또는 <strong>쉼표</strong>로 구분해서 입력하세요 (최대 50개).
+            <span className="ml-1 text-navy-500">또는 리서치 페이지에서 체크박스로 여러 개 선택해 넘어올 수도 있습니다.</span>
+          </p>
+          <textarea
+            value={directKeywordsText}
+            onChange={(e) => setDirectKeywordsText(e.target.value)}
+            rows={5}
+            placeholder={'실리콘장갑\n빨래건조대\n젖병솔'}
+            disabled={enqueuing}
+            className="block w-full rounded-md border border-navy-300 bg-white px-3 py-2 text-sm font-mono text-navy-900 placeholder-navy-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-navy-50"
+          />
+          <p className="mt-2 text-xs text-navy-500">
+            현재 {effectiveKeywords.length}개 입력됨
+          </p>
+        </section>
+      )}
+
       {/* 조건 설정 */}
       {!batchId && (
         <section className="rounded-xl border border-navy-200 bg-white p-6 shadow-sm">
@@ -380,7 +444,7 @@ export function BatchAnalysisForm({
             <button
               type="button"
               onClick={start}
-              disabled={enqueuing || initialKeywords.length === 0}
+              disabled={enqueuing || effectiveKeywords.length === 0}
               className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-3 text-base font-bold text-white shadow-sm transition hover:bg-blue-700 hover:shadow disabled:cursor-not-allowed disabled:opacity-50"
             >
               {enqueuing ? (
@@ -388,10 +452,10 @@ export function BatchAnalysisForm({
               ) : (
                 <Play className="h-5 w-5" />
               )}
-              배치 분석 시작 ({initialKeywords.length}개)
+              배치 분석 시작 ({effectiveKeywords.length}개)
             </button>
             <span className="text-sm text-navy-500">
-              워커에 {initialKeywords.length}개 작업을 등록합니다. 탭을 닫아도 계속 진행.
+              워커에 {effectiveKeywords.length}개 작업을 등록합니다. 탭을 닫아도 계속 진행.
             </span>
           </div>
         </section>
@@ -414,6 +478,17 @@ export function BatchAnalysisForm({
                 배치 ID <code className="font-mono text-xs">{batchId.slice(0, BATCH_ID_DISPLAY_LEN)}</code> ·
                 이 URL 은 나중에 다시 열어도 결과를 볼 수 있습니다.
               </p>
+              {running && (
+                <p className="mt-1 flex items-center gap-1.5 text-xs text-navy-500">
+                  <Loader2 className="h-3 w-3 animate-spin text-blue-600" />
+                  <span>
+                    실시간 폴링 중
+                    {lastPolledAt
+                      ? ` · 마지막 갱신 ${Math.max(0, Math.floor((nowTick - lastPolledAt.getTime()) / 1000))}초 전`
+                      : ' · 첫 응답 대기…'}
+                  </span>
+                </p>
+              )}
             </div>
             {running && (
               <button
@@ -769,12 +844,18 @@ function ResultRow({ item }: { item: DisplayItem }) {
             <Clock className="h-3.5 w-3.5" /> 대기 중
           </span>
         );
-      case 'running':
+      case 'running': {
+        const elapsed = item.startedAt
+          ? Math.max(0, Math.floor((Date.now() - new Date(item.startedAt).getTime()) / 1000))
+          : 0;
+        const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
+        const ss = String(elapsed % 60).padStart(2, '0');
         return (
           <span className="inline-flex items-center gap-1.5 rounded-md bg-blue-100 px-2.5 py-1 text-xs font-bold text-blue-700">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> 워커 처리 중
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> 워커 처리 중 ({mm}:{ss})
           </span>
         );
+      }
       case 'done':
         return item.filterResult?.passed ? (
           <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">
@@ -984,3 +1065,4 @@ function BulkAddForm({
     </form>
   );
 }
+

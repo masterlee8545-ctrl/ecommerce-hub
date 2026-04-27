@@ -1,10 +1,10 @@
 /**
- * 아이템 스카우트 토큰 입력 폼 (클라이언트 컴포넌트)
+ * 셀록홈즈 쿠키 입력 폼 (클라이언트 컴포넌트)
  *
  * 역할:
- * - i_token 붙여넣기 + 저장
+ * - connect.sid 쿠키 붙여넣기 + 저장
  * - 연결 상태 표시 (연결됨 / 미연결)
- * - 저장 시 자동 유효성 검증
+ * - 저장 시 자동 유효성 검증 (셀록홈즈 bootstrap API 호출)
  */
 'use client';
 
@@ -12,13 +12,13 @@ import { useState, useTransition } from 'react';
 
 import { CheckCircle2, Loader2, Save, XCircle } from 'lucide-react';
 
-import { saveItemScoutTokenAction } from '@/lib/itemscout/actions';
+import { saveSellochomesCookieAction } from '@/lib/sellochomes/actions';
 
-interface ItemScoutTokenFormProps {
+interface SellochomesCookieFormProps {
   isConnected: boolean;
 }
 
-export function ItemScoutTokenForm({ isConnected }: ItemScoutTokenFormProps) {
+export function SellochomesCookieForm({ isConnected }: SellochomesCookieFormProps) {
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [connected, setConnected] = useState(isConnected);
@@ -27,17 +27,20 @@ export function ItemScoutTokenForm({ isConnected }: ItemScoutTokenFormProps) {
     setResult(null);
     startTransition(async () => {
       try {
-        const res = await saveItemScoutTokenAction(formData);
+        const res = await saveSellochomesCookieAction(formData);
         if (res.ok) {
-          setResult({ ok: true, message: '토큰이 저장되었습니다. 상품 발굴에서 카테고리 탐색을 사용할 수 있습니다.' });
+          setResult({
+            ok: true,
+            message: '쿠키가 저장되었습니다. 상품 발굴에서 카테고리 소싱을 사용할 수 있습니다.',
+          });
           setConnected(true);
         } else {
-          setResult({ ok: false, message: res.error ?? '토큰 저장에 실패했습니다.' });
+          setResult({ ok: false, message: res.error ?? '쿠키 저장에 실패했습니다.' });
         }
       } catch (err) {
         setResult({
           ok: false,
-          message: err instanceof Error ? err.message : '토큰 저장에 실패했습니다.',
+          message: err instanceof Error ? err.message : '쿠키 저장에 실패했습니다.',
         });
       }
     });
@@ -60,17 +63,17 @@ export function ItemScoutTokenForm({ isConnected }: ItemScoutTokenFormProps) {
         )}
       </div>
 
-      {/* 토큰 입력 */}
+      {/* 쿠키 입력 */}
       <form action={handleSubmit} className="flex items-end gap-2">
         <div className="flex-1">
-          <label htmlFor="is-token" className="block text-xs font-semibold text-navy-700">
-            i_token 값
+          <label htmlFor="sc-cookie" className="block text-xs font-semibold text-navy-700">
+            connect.sid 값
           </label>
           <input
             type="text"
-            id="is-token"
-            name="token"
-            placeholder="아이템스카우트 쿠키에서 복사한 i_token 값"
+            id="sc-cookie"
+            name="cookie"
+            placeholder="셀록홈즈 쿠키에서 복사한 connect.sid 값 (s%3A로 시작)"
             className="mt-1 block w-full rounded-md border border-navy-200 bg-white px-3 py-2 font-mono text-xs text-navy-900 placeholder-navy-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
             disabled={isPending}
           />

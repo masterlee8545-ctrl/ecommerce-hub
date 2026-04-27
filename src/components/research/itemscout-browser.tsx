@@ -16,7 +16,7 @@
  */
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 
 import {
   ArrowDownUp,
@@ -205,6 +205,18 @@ export function ItemScoutBrowser({
       const next = new Set(prev);
       if (next.has(keyword)) next.delete(keyword);
       else next.add(keyword);
+      return next;
+    });
+  }, []);
+
+  // Shift+클릭 — 범위 선택/해제 (첫 항목과 마지막 항목 사이 전체)
+  const bulkToggleKeywords = useCallback((keywords: string[], shouldSelect: boolean) => {
+    setSelectedKeywords((prev) => {
+      const next = new Set(prev);
+      for (const k of keywords) {
+        if (shouldSelect) next.add(k);
+        else next.delete(k);
+      }
       return next;
     });
   }, []);
@@ -420,6 +432,7 @@ export function ItemScoutBrowser({
             activeCompanyId={activeCompanyId}
             selectedKeywords={selectedKeywords}
             onToggleSelect={toggleKeywordSelect}
+            onBulkToggle={bulkToggleKeywords}
             onClearSelection={clearSelection}
           />
         )}
@@ -556,13 +569,20 @@ function SubcategoryList({
             <FolderOpen className="h-3.5 w-3.5 shrink-0 text-navy-400" />
             {sub.name}
             {sub.is_leaf === 0 && (
-              <ChevronRight className="h-3 w-3 shrink-0 text-navy-300" />
+              <>
+                <ChevronRight className="h-3 w-3 shrink-0 text-navy-300" />
+                <span className="text-[10px] text-navy-400">하위 더 있음</span>
+              </>
+            )}
+            {sub.is_leaf === 1 && (
+              <span className="text-[10px] text-emerald-600">· leaf</span>
             )}
           </button>
           <button
             type="button"
             onClick={() => onLoadKeywords(sub)}
             className="shrink-0 rounded border border-teal-200 bg-teal-50 px-2 py-0.5 text-[10px] font-semibold text-teal-700 hover:bg-teal-100"
+            title="이 카테고리에서 바로 키워드 조회 (데이터 없으면 상위 카테고리 조회 추천)"
           >
             <TrendingUp className="mr-0.5 inline h-2.5 w-2.5" />
             키워드 보기
@@ -621,6 +641,7 @@ function KeywordGrid({
   activeCompanyId,
   selectedKeywords,
   onToggleSelect,
+  onBulkToggle,
   onClearSelection,
 }: {
   keywords: Keyword[];
@@ -631,12 +652,18 @@ function KeywordGrid({
   activeCompanyId: string;
   selectedKeywords: Set<string>;
   onToggleSelect: (keyword: string) => void;
+  onBulkToggle: (keywords: string[], shouldSelect: boolean) => void;
   onClearSelection: () => void;
 }) {
   // 검색량 범위 (월간) — null = 경계 없음
   const [minSearch, setMinSearch] = useState<number | null>(null);
   const [maxSearch, setMaxSearch] = useState<number | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('rank');
+  // 쿠팡 조건 — 배치 분석 페이지로 같이 넘어갈 값 (prefill)
+  const [coupangReviewThreshold, setCoupangReviewThreshold] = useState(500);
+  const [coupangBelowRatio, setCoupangBelowRatio] = useState(60); // %
+  // Shift+클릭 범위 선택용 — 마지막으로 토글한 filtered 배열 인덱스
+  const lastClickedIndexRef = useRef<number | null>(null);
 
   const filtered = useMemo(() => {
     const lo = minSearch ?? 0;
@@ -676,9 +703,18 @@ function KeywordGrid({
 
   if (keywords.length === 0) {
     return (
-      <div className="py-8 text-center">
-        <Search className="mx-auto h-8 w-8 text-navy-300" />
-        <p className="mt-2 text-sm text-navy-400">이 카테고리에 키워드가 없습니다.</p>
+      <div className="rounded-md border border-amber-200 bg-amber-50/50 p-5 text-center">
+        <Search className="mx-auto h-8 w-8 text-amber-500" />
+        <p className="mt-2 text-sm font-semibold text-amber-900">
+          이 카테고리에는 아이템스카우트 데이터가 없습니다.
+        </p>
+        <p className="mt-2 text-xs leading-relaxed text-amber-800">
+          아이템스카우트는 일부 깊은 세부 카테고리나 특정 대분류(도서·문구·완구·음반·반려용품)
+          데이터를 제공하지 않습니다.
+          <br />
+          <strong className="text-amber-900">위쪽 &quot;뒤로&quot; 버튼으로 상위 카테고리로 이동</strong>해서
+          다시 시도하세요.
+        </p>
       </div>
     );
   }
@@ -781,6 +817,50 @@ function KeywordGrid({
               : `${keywords.length}개 중 ${filtered.length}개 표시`}
           </span>
         </div>
+
+        {/* 3행: 쿠팡 조건 + 원클릭 배치 분석 */}
+        <div className="flex flex-wrap items-center gap-2 border-t border-teal-200 pt-2">
+          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-navy-700">
+            🛒 쿠팡 리뷰
+          </span>
+          <input
+            type="number"
+            min={0}
+            step={50}
+            value={coupangReviewThreshold}
+            onChange={(e) => setCoupangReviewThreshold(Math.max(0, Number(e.target.value) || 0))}
+            className="h-7 w-20 rounded-md border border-navy-200 bg-white px-2 text-[11px] text-navy-800 focus:border-teal-400 focus:outline-none"
+            aria-label="쿠팡 리뷰 임계값"
+          />
+          <span className="text-[11px] text-navy-600">미만이</span>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step={5}
+            value={coupangBelowRatio}
+            onChange={(e) => setCoupangBelowRatio(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
+            className="h-7 w-14 rounded-md border border-navy-200 bg-white px-2 text-[11px] text-navy-800 focus:border-teal-400 focus:outline-none"
+            aria-label="쿠팡 조건 비율"
+          />
+          <span className="text-[11px] text-navy-600">% 이상</span>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (filtered.length === 0) return;
+              const keywordList = filtered.map((k) => k.keyword);
+              const encoded = keywordList.map(encodeURIComponent).join(',');
+              const url = `/research/batch-analysis?keywords=${encoded}&review=${coupangReviewThreshold}&ratio=${coupangBelowRatio}&auto=1`;
+              window.location.href = url;
+            }}
+            disabled={filtered.length === 0}
+            className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            title="필터 통과한 전체 키워드를 쿠팡 배치 분석으로 바로 보내고 자동 시작"
+          >
+            ⚡ 필터 통과 {filtered.length}개 즉시 분석
+          </button>
+        </div>
       </div>
 
       {/* 결과 */}
@@ -792,9 +872,12 @@ function KeywordGrid({
         <>
           <p className="text-xs text-navy-500">
             마음에 드는 상품을 장바구니에 담으세요.
+            <span className="ml-1 text-navy-400">
+              · 체크박스 <kbd className="rounded border border-navy-300 bg-white px-1 font-mono text-[10px]">Shift</kbd>+클릭으로 범위 선택 가능
+            </span>
           </p>
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            {filtered.map((kw) => (
+            {filtered.map((kw, index) => (
               <KeywordCard
                 key={kw.keyword}
                 keyword={kw}
@@ -804,7 +887,20 @@ function KeywordGrid({
                 userCompanies={userCompanies}
                 activeCompanyId={activeCompanyId}
                 isSelected={selectedKeywords.has(kw.keyword)}
-                onToggleSelect={onToggleSelect}
+                onSelectClick={(shiftKey) => {
+                  const last = lastClickedIndexRef.current;
+                  if (shiftKey && last !== null && last !== index) {
+                    const from = Math.min(last, index);
+                    const to = Math.max(last, index);
+                    const rangeKeywords = filtered.slice(from, to + 1).map((k) => k.keyword);
+                    // 클릭한 카드의 현재 상태 반대로 범위 전체 적용
+                    const shouldSelect = !selectedKeywords.has(kw.keyword);
+                    onBulkToggle(rangeKeywords, shouldSelect);
+                  } else {
+                    onToggleSelect(kw.keyword);
+                  }
+                  lastClickedIndexRef.current = index;
+                }}
               />
             ))}
           </div>
@@ -830,7 +926,7 @@ function KeywordCard({
   userCompanies,
   activeCompanyId,
   isSelected,
-  onToggleSelect,
+  onSelectClick,
 }: {
   keyword: Keyword;
   addToBasketAction: (form: FormData) => void;
@@ -839,7 +935,7 @@ function KeywordCard({
   userCompanies: BrowserCompany[];
   activeCompanyId: string;
   isSelected: boolean;
-  onToggleSelect: (keyword: string) => void;
+  onSelectClick: (shiftKey: boolean) => void;
 }) {
   const ratioNum = kw.coupangCompetitionRatio != null ? parseFloat(kw.coupangCompetitionRatio) : null;
   const competition = getCompetitionLevel(ratioNum);
@@ -867,12 +963,22 @@ function KeywordCard({
           : 'border-navy-100 bg-navy-50/20'
       }`}
     >
-      {/* 배치 선택 체크박스 */}
-      <label className="flex shrink-0 cursor-pointer items-center pt-1" title="배치 분석에 포함">
+      {/* 배치 선택 체크박스 — Shift+클릭으로 범위 선택 지원 */}
+      <label
+        className="flex shrink-0 cursor-pointer items-center pt-1"
+        title="배치 분석에 포함 (Shift+클릭: 범위 선택)"
+        onClick={(e) => {
+          // 체크박스 기본 토글 막고 직접 처리 (shiftKey 보존)
+          e.preventDefault();
+          onSelectClick(e.shiftKey);
+        }}
+      >
         <input
           type="checkbox"
           checked={isSelected}
-          onChange={() => onToggleSelect(kw.keyword)}
+          onChange={() => {
+            /* onClick 에서 처리 — onChange 는 React warning 방지용 noop */
+          }}
           className="h-4 w-4 cursor-pointer rounded border-navy-300 text-blue-600 focus:ring-blue-500"
         />
       </label>

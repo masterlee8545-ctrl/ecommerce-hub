@@ -149,12 +149,21 @@ async function getToken(): Promise<string> {
   );
 }
 
-/** 토큰을 저장한다 (메모리 + 파일). */
+/**
+ * 토큰을 저장한다 (메모리 + 파일).
+ * Vercel 서버리스는 read-only 파일시스템 → 파일 쓰기 실패해도 globalThis 는 유지됨.
+ * 영구 저장은 env 변수(ITEMSCOUT_TOKEN) 업데이트 또는 DB 저장으로 해야 함 (추후 개선).
+ */
 export async function saveItemScoutToken(token: string): Promise<void> {
   globalThis.__itemscoutToken = token;
-  const dir = join(process.cwd(), '.data');
-  await mkdir(dir, { recursive: true });
-  await writeFile(TOKEN_FILE_PATH, JSON.stringify({ token }, null, 2), 'utf-8');
+  try {
+    const dir = join(process.cwd(), '.data');
+    await mkdir(dir, { recursive: true });
+    await writeFile(TOKEN_FILE_PATH, JSON.stringify({ token }, null, 2), 'utf-8');
+  } catch (err) {
+    // 읽기전용 FS(예: Vercel) 에선 파일 저장 불가 — 에러 로그만 남기고 조용히 무시
+    console.warn('[saveItemScoutToken] 파일 저장 실패 (메모리에는 유지됨):', err instanceof Error ? err.message : err);
+  }
 }
 
 /** 현재 토큰이 설정되어 있는지 확인. */

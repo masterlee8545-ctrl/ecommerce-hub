@@ -20,17 +20,20 @@ import {
 } from 'lucide-react';
 
 import { ItemScoutTokenForm } from '@/components/settings/itemscout-token-form';
+import { SellochomesCookieForm } from '@/components/settings/sellochomes-cookie-form';
 import { requireCompanyContext } from '@/lib/auth/session';
 import { getDashboardStats } from '@/lib/dashboard/stats';
 import { hasItemScoutToken } from '@/lib/itemscout/client';
+import { hasSellochomesCookie } from '@/lib/sellochomes/client';
 
 export const dynamic = 'force-dynamic';
 
 export default async function SettingsPage() {
   const ctx = await requireCompanyContext();
-  const [stats, isItemScoutConnected] = await Promise.all([
+  const [stats, isItemScoutConnected, isSellochomesConnected] = await Promise.all([
     getDashboardStats(ctx.companyId),
     hasItemScoutToken(),
+    hasSellochomesCookie(),
   ]);
 
   return (
@@ -111,6 +114,42 @@ export default async function SettingsPage() {
         <div className="mt-3 flex items-center gap-4 text-xs text-navy-500">
           <span>미해결 작업: <strong className="text-navy-700">{stats.openTasks}건</strong></span>
           <span>미읽은 알림: <strong className="text-navy-700">{stats.unreadNotifications}건</strong></span>
+        </div>
+      </section>
+
+      {/* 셀록홈즈 연결 */}
+      <section className="rounded-lg border border-navy-200 bg-white p-5">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-navy-900">
+          <Link2 className="h-4 w-4 text-teal-600" />
+          셀록홈즈 연결
+        </h2>
+        <p className="mt-1 text-xs text-navy-500">
+          셀록홈즈에서 카테고리/키워드 데이터를 가져오려면 로그인 쿠키가 필요합니다.
+          만료 시 여기에서 새 쿠키를 입력하면 즉시 적용됩니다 (재배포 불필요).
+        </p>
+        <div className="mt-3">
+          <SellochomesCookieForm isConnected={isSellochomesConnected} />
+        </div>
+        <div className="mt-2 rounded-md bg-navy-50/50 p-3">
+          <p className="text-[11px] leading-relaxed text-navy-500">
+            <strong className="text-navy-700">쿠키 가져오는 방법:</strong>
+            <br />
+            1. <a
+              href="https://sellochomes.co.kr"
+              target="_blank"
+              rel="noreferrer"
+              className="text-teal-700 underline"
+            >
+              sellochomes.co.kr
+            </a>{' '}
+            로그인
+            <br />
+            2. F12 → Application 탭 → Cookies → https://sellochomes.co.kr 클릭
+            <br />
+            3. <code className="rounded bg-white px-1 py-0.5 text-[10px]">connect.sid</code> 행의 Value 값 복사 (s%3A로 시작)
+            <br />
+            4. 위 칸에 붙여넣고 저장
+          </p>
         </div>
       </section>
 

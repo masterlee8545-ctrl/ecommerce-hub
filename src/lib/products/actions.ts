@@ -265,6 +265,179 @@ export async function updateProductAction(
 }
 
 // ─────────────────────────────────────────────────────────
+// 액션 — 여러 상품 일괄 단계 전환 (장바구니 선택 후 수입/위탁판매 일괄 전환)
+// ─────────────────────────────────────────────────────────
+
+export interface BulkTransitionResult {
+  ok: boolean;
+  success: number;
+  failed: number;
+  error: string | undefined;
+}
+
+/**
+ * 여러 productId 를 한 번에 같은 단계로 전환 (research → sourcing 등).
+ * reason 에 "수입" or "위탁판매" 를 넣으면 history 에 구분 기록됨.
+ */
+export async function bulkTransitionAction(form: FormData): Promise<BulkTransitionResult> {
+  const productIds = form
+    .getAll('productIds')
+    .map((v) => (typeof v === 'string' ? v.trim() : ''))
+    .filter((v) => v.length > 0);
+  const toStatus = parsePipelineStageField(form, 'toStatus');
+  const reason = getOptionalStringField(form, 'reason');
+
+  if (productIds.length === 0) {
+    return { ok: false, success: 0, failed: 0, error: '선택된 상품이 없습니다.' };
+  }
+  if (!toStatus) {
+    return { ok: false, success: 0, failed: 0, error: '전환할 단계가 지정되지 않았습니다.' };
+  }
+
+  const ctx = await requireCompanyContext();
+
+  let success = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (const productId of productIds) {
+    try {
+      const product = await getProductById(ctx.companyId, productId);
+      if (!product) {
+        failed += 1;
+        errors.push(`${productId}: 찾을 수 없음`);
+        continue;
+      }
+      assertCanTransitionStatus(ctx.role, product, ctx.userId);
+      await transitionProductStatus({
+        companyId: ctx.companyId,
+        productId,
+        toStatus,
+        changedBy: ctx.userId,
+        reason,
+      });
+      success += 1;
+    } catch (err) {
+      failed += 1;
+      errors.push(`${productId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  revalidatePath('/research');
+  revalidatePath('/products');
+  revalidatePath('/');
+
+  return {
+    ok: failed === 0,
+    success,
+    failed,
+    error: errors.length > 0 ? errors.slice(0, 3).join(' · ') : undefined,
+  };
+}
+
+// ─────────────────────────────────────────────────────────
+// 액션 — 장바구니(research) 상품 일괄 삭제
+// ─────────────────────────────────────────────────────────
+
+export interface BulkDeleteResult {
+  ok: boolean;
+  deleted: number;
+  blocked: number;
+  error: string | undefined;
+}
+
+/**
+ * 장바구니의 상품을 영구 삭제. 안전 가드:
+ * - status === 'research' 인 상품만 삭제 (sourcing 이후는 사업 진행 중이라 거부)
+ * - 자식 테이블(history/tasks/notifications/plans/marketing) 도 함께 정리
+ * - 권한: assertManager
+ */
+export async function bulkDeleteProductsAction(form: FormData): Promise<BulkDeleteResult> {
+  const productIds = form
+    .getAll('productIds')
+    .map((v) => (typeof v === 'string' ? v.trim() : ''))
+    .filter((v) => v.length > 0);
+
+  if (productIds.length === 0) {
+    return { ok: false, deleted: 0, blocked: 0, error: '선택된 상품이 없습니다.' };
+  }
+
+  const ctx = await requireCompanyContext();
+  try {
+    assertManager(ctx.role, '장바구니 상품 삭제');
+  } catch (err) {
+    if (err instanceof PermissionError) {
+      return { ok: false, deleted: 0, blocked: 0, error: err.message };
+    }
+    throw err;
+  }
+
+  const { withCompanyContext } = await import('@/db');
+  const { products, productStateHistory, marketingActivities, productPlans, tasks, notifications } =
+    await import('@/db/schema');
+  const { and, eq, inArray } = await import('drizzle-orm');
+
+  let deleted = 0;
+  let blocked = 0;
+
+  await withCompanyContext(ctx.companyId, async (tx) => {
+    // 안전 가드: research 단계만 골라냄
+    const candidates = await tx
+      .select({ id: products.id, status: products.status })
+      .from(products)
+      .where(
+        and(
+          eq(products.company_id, ctx.companyId),
+          inArray(products.id, productIds),
+        ),
+      );
+
+    const deletable = candidates.filter((p) => p.status === 'research').map((p) => p.id);
+    blocked = candidates.length - deletable.length;
+
+    if (deletable.length === 0) return;
+
+    // 자식 정리 → 부모 삭제 순. NOTE: marketing/plans 는 research 단계엔 보통 없지만 안전 차원에서.
+    await tx
+      .delete(marketingActivities)
+      .where(inArray(marketingActivities.product_id, deletable));
+    await tx.delete(productPlans).where(inArray(productPlans.product_id, deletable));
+    await tx.delete(tasks).where(inArray(tasks.product_id, deletable));
+    await tx
+      .delete(notifications)
+      .where(inArray(notifications.related_product_id, deletable));
+    await tx
+      .delete(productStateHistory)
+      .where(inArray(productStateHistory.product_id, deletable));
+
+    const res = await tx
+      .delete(products)
+      .where(
+        and(
+          eq(products.company_id, ctx.companyId),
+          inArray(products.id, deletable),
+        ),
+      )
+      .returning({ id: products.id });
+    deleted = res.length;
+  });
+
+  revalidatePath('/research');
+  revalidatePath('/products');
+  revalidatePath('/');
+
+  return {
+    ok: deleted > 0,
+    deleted,
+    blocked,
+    error:
+      blocked > 0
+        ? `${blocked}개는 이미 다음 단계로 진행돼서 삭제할 수 없습니다 (장바구니 단계만 가능).`
+        : undefined,
+  };
+}
+
+// ─────────────────────────────────────────────────────────
 // 액션 — 단계 전환 (fire-and-forget 인라인 버튼)
 // ─────────────────────────────────────────────────────────
 
@@ -419,6 +592,9 @@ export async function bulkAddToBasketAction(form: FormData): Promise<void> {
     .filter((v) => v.length > 0);
   const targetCompanyIdRaw = getOptionalStringField(form, 'targetCompanyId');
   const memoPrefix = getOptionalStringField(form, 'memoPrefix');
+  // 각 키워드별 상세 설명 (셀록홈즈 메타 등). keywords 와 같은 순서, 없으면 memoPrefix 로 폴백.
+  const descriptionsRaw = form.getAll('descriptions');
+  const descriptions = descriptionsRaw.map((v) => (typeof v === 'string' ? v : ''));
 
   if (keywords.length === 0) {
     throw new Error('담을 키워드가 없습니다.');
@@ -440,7 +616,8 @@ export async function bulkAddToBasketAction(form: FormData): Promise<void> {
     skipped: 0,
     failed: 0,
   };
-  for (const name of keywords) {
+  for (let i = 0; i < keywords.length; i++) {
+    const name = keywords[i]!;
     try {
       const RADIX_ALPHANUM = 36;
       const RANDOM_SUFFIX_LEN = 6;
@@ -450,7 +627,9 @@ export async function bulkAddToBasketAction(form: FormData): Promise<void> {
             .toString(RADIX_ALPHANUM)
             .slice(2, 2 + RANDOM_SUFFIX_LEN - 2)}`,
       );
-      const description = memoPrefix ?? null;
+      // 키워드별 상세 메타 있으면 그걸, 없으면 memoPrefix 로 폴백
+      const perItem = descriptions[i]?.trim();
+      const description = perItem && perItem.length > 0 ? perItem : (memoPrefix ?? null);
       await createProduct({
         companyId: targetCompanyId,
         code,
@@ -475,9 +654,14 @@ export async function bulkAddToBasketAction(form: FormData): Promise<void> {
   revalidatePath('/research');
   revalidatePath('/products');
   revalidatePath('/');
-  redirect(
-    `/research?flash=bulk-added:${createdCount.ok},${createdCount.skipped},${createdCount.failed}`,
-  );
+
+  // 기본: /research 로 redirect + flash. noRedirect=1 폼이면 client 에서 router.refresh() 로 처리.
+  const noRedirect = getOptionalStringField(form, 'noRedirect');
+  if (noRedirect !== '1') {
+    redirect(
+      `/research?flash=bulk-added:${createdCount.ok},${createdCount.skipped},${createdCount.failed}`,
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────
