@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 
 import { useRouter } from 'next/navigation';
 
-import { AlertCircle, Loader2, ShoppingCart, StopCircle } from 'lucide-react';
+import { AlertCircle, Loader2, Plus, ShoppingCart, StopCircle, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { bulkAddToBasketAction } from '@/lib/products/actions';
@@ -122,15 +122,28 @@ export function SelloBrowser({
 }) {
   const [tree, setTree] = useState<TreeLevel[]>([]);
   const [selected, setSelected] = useState<string[]>([]); // ['식품', '농산물', '과일', …]
-  const [keywords, setKeywords] = useState<Keyword[] | null>(null);
+  // 현재 드릴다운으로 미리보는 키워드 (아직 누적 안 된 상태). 누적 X 면 이게 표 source.
+  const [previewKeywords, setPreviewKeywords] = useState<Keyword[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 누적 카테고리 — 여러 카테고리 키워드를 합쳐서 보여줌.
+  // key = 카테고리 path 문자열 (예: "식품>농산물>과일") / value = 그 카테고리 키워드 배열.
+  // 비어있으면 previewKeywords (단일 모드) 가 표 source. 1개 이상 있으면 누적 모드.
+  const [categoryStore, setCategoryStore] = useState<Map<string, Keyword[]>>(new Map());
 
   // 필터
   const [minSearch, setMinSearch] = useState<number>(DEFAULT_MIN_SEARCH);
   const [maxSearch, setMaxSearch] = useState<number>(DEFAULT_MAX_SEARCH);
   const [maxCoupangReview, setMaxCoupangReview] = useState<number>(DEFAULT_MAX_COUPANG_REVIEW);
   const [excludeBrand, setExcludeBrand] = useState(true);
+  // 추가 필터 — 빈 칸 ('') 이면 미적용
+  const [maxCompetition, setMaxCompetition] = useState<string>('');
+  const [maxCoupangMaxReview, setMaxCoupangMaxReview] = useState<string>('');
+  const [maxRocketRatio, setMaxRocketRatio] = useState<string>(''); //  0~100 (%)
+  const [minAvgPrice, setMinAvgPrice] = useState<string>('');
+  const [maxAvgPrice, setMaxAvgPrice] = useState<string>('');
+  const [minReviewDistUnder500, setMinReviewDistUnder500] = useState<string>(''); //  분석된 키워드만 적용
 
   // 선택 (체크박스)
   const [selectedKeywords, setSelectedKeywords] = useState<Set<string>>(new Set());
@@ -188,8 +201,7 @@ export function SelloBrowser({
         return;
       }
       setTree(body.tree);
-      setKeywords(body.keywords);
-      setSelectedKeywords(new Set());
+      setPreviewKeywords(body.keywords);
     } catch (err) {
       setError(err instanceof Error ? err.message : '불러오기 실패');
     } finally {
@@ -208,6 +220,46 @@ export function SelloBrowser({
     setSelected(next);
     void load(next.join('>'));
   }
+
+  // 현재 드릴다운한 카테고리를 누적 store 에 추가.
+  // 추가 후 드릴다운은 최상위로 리셋 → 다음 카테고리 골라서 누적 가능.
+  function addCurrentCategoryToStore(): void {
+    const path = selected.join('>');
+    if (!path || !previewKeywords || previewKeywords.length === 0) return;
+    setCategoryStore((prev) => {
+      const next = new Map(prev);
+      next.set(path, previewKeywords);
+      return next;
+    });
+    // 드릴다운 리셋 — 다음 카테고리 고르러
+    setSelected([]);
+    setPreviewKeywords(null);
+    void load('');
+  }
+
+  function removeCategoryFromStore(path: string): void {
+    setCategoryStore((prev) => {
+      const next = new Map(prev);
+      next.delete(path);
+      return next;
+    });
+  }
+
+  function clearAllCategories(): void {
+    setCategoryStore(new Map());
+  }
+
+  // 누적 store 가 있으면 머지된 키워드, 없으면 단일 드릴다운 미리보기.
+  const mergedKeywords = useMemo<Keyword[] | null>(() => {
+    if (categoryStore.size === 0) return previewKeywords;
+    const map = new Map<string, Keyword>();
+    for (const kws of categoryStore.values()) {
+      for (const k of kws) {
+        if (!map.has(k.keyword)) map.set(k.keyword, k);
+      }
+    }
+    return Array.from(map.values());
+  }, [categoryStore, previewKeywords]);
 
   // ── 리뷰 분포 분석 (사장님 핵심 use case) ──
   // 키워드 1개당 셀록홈즈 사용량 1회 차감.
@@ -280,17 +332,53 @@ export function SelloBrowser({
     stopRequestedRef.current = false;
   }
 
+  // 빈 문자열 / NaN 인 필터값은 미적용 (number 변환 가드)
+  function asNumberOrNull(s: string): number | null {
+    const n = Number(s);
+    return s.trim() === '' || Number.isNaN(n) ? null : n;
+  }
+
   // ── 필터 적용 ──
   const filtered = useMemo(() => {
-    if (!keywords) return [];
-    return keywords.filter((k) => {
+    if (!mergedKeywords) return [];
+    const fMaxComp = asNumberOrNull(maxCompetition);
+    const fMaxMaxRev = asNumberOrNull(maxCoupangMaxReview);
+    const fMaxRocket = asNumberOrNull(maxRocketRatio); // 0~100
+    const fMinPrice = asNumberOrNull(minAvgPrice);
+    const fMaxPrice = asNumberOrNull(maxAvgPrice);
+    const fMinDistUnder = asNumberOrNull(minReviewDistUnder500);
+
+    return mergedKeywords.filter((k) => {
       if (k.monthlyQcCnt < minSearch) return false;
       if (k.monthlyQcCnt > maxSearch) return false;
       if (k.c_avgReviewCnt > maxCoupangReview) return false;
       if (excludeBrand && k.isBrandKey === 1) return false;
+      if (fMaxComp !== null && k.competition > fMaxComp) return false;
+      if (fMaxMaxRev !== null && k.c_maxReviewCnt > fMaxMaxRev) return false;
+      if (fMaxRocket !== null && k.c_rocketRatio * PERCENT > fMaxRocket) return false;
+      if (fMinPrice !== null && (k.c_avgPrice ?? 0) < fMinPrice) return false;
+      if (fMaxPrice !== null && (k.c_avgPrice ?? 0) > fMaxPrice) return false;
+      // 리뷰 분포 필터: 분석된 키워드만 적용. 미분석은 통과 (사용자가 별도로 분석 후 평가).
+      if (fMinDistUnder !== null) {
+        const d = reviewDist.get(k.keyword);
+        if (typeof d === 'object' && d.underThresholdCount < fMinDistUnder) return false;
+      }
       return true;
     });
-  }, [keywords, minSearch, maxSearch, maxCoupangReview, excludeBrand]);
+  }, [
+    mergedKeywords,
+    minSearch,
+    maxSearch,
+    maxCoupangReview,
+    excludeBrand,
+    maxCompetition,
+    maxCoupangMaxReview,
+    maxRocketRatio,
+    minAvgPrice,
+    maxAvgPrice,
+    minReviewDistUnder500,
+    reviewDist,
+  ]);
 
   // ── 정렬 적용 (필터 다음 단계) ──
   // sortBy 가 null 이면 필터 결과 순서 그대로 (= 셀록홈즈 기본 정렬)
@@ -362,6 +450,46 @@ export function SelloBrowser({
 
   return (
     <div className="space-y-4">
+      {/* 누적 카테고리 칩 — 1개 이상 추가됐을 때만 보임 */}
+      {categoryStore.size > 0 && (
+        <section className="rounded-lg border border-violet-200 bg-violet-50/30 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs font-semibold text-violet-700">
+              📌 누적된 카테고리 ({categoryStore.size}개)
+            </span>
+            <button
+              type="button"
+              onClick={clearAllCategories}
+              className="text-[11px] text-navy-500 hover:text-red-600 hover:underline"
+            >
+              전체 비우기
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {Array.from(categoryStore.entries()).map(([path, kws]) => (
+              <span
+                key={path}
+                className="inline-flex items-center gap-1 rounded-full border border-violet-300 bg-white px-2.5 py-1 text-xs text-navy-800"
+              >
+                <span>{path.replace(/>/g, ' › ')}</span>
+                <span className="text-[10px] text-navy-400">({kws.length})</span>
+                <button
+                  type="button"
+                  onClick={() => removeCategoryFromStore(path)}
+                  className="ml-0.5 rounded-full text-navy-400 hover:bg-red-100 hover:text-red-600"
+                  title="이 카테고리 제거"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] text-navy-500">
+            💡 아래 드릴다운으로 더 추가할 수 있어요. 같은 키워드가 여러 카테고리에 있으면 한 번만 표시됩니다.
+          </p>
+        </section>
+      )}
+
       {/* 카테고리 드릴다운 */}
       <section className="rounded-lg border border-navy-200 bg-white p-4">
         <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -438,13 +566,17 @@ export function SelloBrowser({
       )}
 
       {/* 키워드 결과 */}
-      {keywords !== null && (
+      {mergedKeywords !== null && (
         <section className="rounded-lg border border-navy-200 bg-white p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-base font-bold text-navy-900">
-                📊 {breadcrumb} — <span className="text-violet-700">{keywords.length}개</span> 전체
-                {filtered.length < keywords.length && (
+                📊{' '}
+                {categoryStore.size > 0
+                  ? `누적 ${categoryStore.size}개 카테고리`
+                  : breadcrumb}
+                {' '}— <span className="text-violet-700">{mergedKeywords.length}개</span> 전체
+                {filtered.length < mergedKeywords.length && (
                   <span className="ml-1 text-sm text-navy-500">
                     / 필터 통과{' '}
                     <span className="font-bold text-emerald-700">{filtered.length}개</span>
@@ -458,6 +590,18 @@ export function SelloBrowser({
                   <span className="text-xs text-navy-500">
                     분석 중 {bulkProgress.done}/{bulkProgress.total}
                   </span>
+                )}
+                {/* 현재 드릴다운한 카테고리를 누적 store 에 추가 */}
+                {selected.length > 0 && previewKeywords && previewKeywords.length > 0 && !bulkAnalyzing && (
+                  <button
+                    type="button"
+                    onClick={addCurrentCategoryToStore}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-violet-400 bg-white px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-50"
+                    title={`"${breadcrumb}" 카테고리를 누적 목록에 추가. 드릴다운은 최상위로 리셋됩니다 — 이어서 다른 카테고리도 추가 가능.`}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    이 카테고리 추가
+                  </button>
                 )}
                 {bulkAnalyzing ? (
                   <button
@@ -498,10 +642,10 @@ export function SelloBrowser({
             )}
           </div>
 
-          {/* 필터 */}
-          <div className="mb-3 grid grid-cols-1 gap-3 rounded-md bg-violet-50/40 p-3 text-xs md:grid-cols-4">
+          {/* 필터 — 빈 칸은 미적용. 모든 입력 필터는 AND 조건. */}
+          <div className="mb-3 grid grid-cols-2 gap-2 rounded-md bg-violet-50/40 p-3 text-xs md:grid-cols-4">
             <div>
-              <label className="block font-semibold text-navy-700">월간 검색량 최소</label>
+              <label className="block font-semibold text-navy-700">월검색 ≥</label>
               <input
                 type="number"
                 min={0}
@@ -512,7 +656,7 @@ export function SelloBrowser({
               />
             </div>
             <div>
-              <label className="block font-semibold text-navy-700">월간 검색량 최대</label>
+              <label className="block font-semibold text-navy-700">월검색 ≤</label>
               <input
                 type="number"
                 min={0}
@@ -523,7 +667,19 @@ export function SelloBrowser({
               />
             </div>
             <div>
-              <label className="block font-semibold text-navy-700">쿠팡 평균 리뷰 최대</label>
+              <label className="block font-semibold text-navy-700">경쟁 ≤ <span className="text-navy-400">(공란=무시)</span></label>
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                placeholder="예: 5"
+                value={maxCompetition}
+                onChange={(e) => setMaxCompetition(e.target.value)}
+                className="mt-1 h-8 w-full rounded border border-navy-200 px-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-navy-700">쿠팡 평균리뷰 ≤</label>
               <input
                 type="number"
                 min={0}
@@ -533,7 +689,69 @@ export function SelloBrowser({
                 className="mt-1 h-8 w-full rounded border border-navy-200 px-2 text-sm"
               />
             </div>
-            <div className="flex items-end">
+            <div>
+              <label className="block font-semibold text-navy-700">쿠팡 최대리뷰 ≤ <span className="text-navy-400">(공란=무시)</span></label>
+              <input
+                type="number"
+                min={0}
+                step={500}
+                placeholder="예: 5000"
+                value={maxCoupangMaxReview}
+                onChange={(e) => setMaxCoupangMaxReview(e.target.value)}
+                className="mt-1 h-8 w-full rounded border border-navy-200 px-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-navy-700">쿠팡 로켓% ≤ <span className="text-navy-400">(공란=무시)</span></label>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={5}
+                placeholder="예: 30"
+                value={maxRocketRatio}
+                onChange={(e) => setMaxRocketRatio(e.target.value)}
+                className="mt-1 h-8 w-full rounded border border-navy-200 px-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-navy-700">평균가 ≥ <span className="text-navy-400">(공란=무시)</span></label>
+              <input
+                type="number"
+                min={0}
+                step={1000}
+                placeholder="예: 10000"
+                value={minAvgPrice}
+                onChange={(e) => setMinAvgPrice(e.target.value)}
+                className="mt-1 h-8 w-full rounded border border-navy-200 px-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-navy-700">평균가 ≤ <span className="text-navy-400">(공란=무시)</span></label>
+              <input
+                type="number"
+                min={0}
+                step={1000}
+                placeholder="예: 100000"
+                value={maxAvgPrice}
+                onChange={(e) => setMaxAvgPrice(e.target.value)}
+                className="mt-1 h-8 w-full rounded border border-navy-200 px-2 text-sm"
+              />
+            </div>
+            <div title="분석된 키워드만 적용 (미분석은 통과). 예: 10 이면 '500미만이 10개 이상' 키워드만.">
+              <label className="block font-semibold text-navy-700">리뷰 분포 ≥ <span className="text-navy-400">(분석된 것만)</span></label>
+              <input
+                type="number"
+                min={0}
+                max={20}
+                step={1}
+                placeholder="예: 10"
+                value={minReviewDistUnder500}
+                onChange={(e) => setMinReviewDistUnder500(e.target.value)}
+                className="mt-1 h-8 w-full rounded border border-navy-200 px-2 text-sm"
+              />
+            </div>
+            <div className="col-span-2 flex items-end md:col-span-1">
               <label className="flex cursor-pointer items-center gap-2">
                 <input
                   type="checkbox"
@@ -541,7 +759,7 @@ export function SelloBrowser({
                   onChange={(e) => setExcludeBrand(e.target.checked)}
                   className="h-4 w-4"
                 />
-                <span className="font-semibold text-navy-700">브랜드 키워드 제외</span>
+                <span className="font-semibold text-navy-700">브랜드 제외</span>
               </label>
             </div>
           </div>
