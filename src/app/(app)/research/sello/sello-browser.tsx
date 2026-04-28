@@ -43,6 +43,19 @@ interface Keyword {
   isCommerceKey: number;
 }
 
+/** /api/sellochomes/keyword-reviews 응답의 distribution 형태 (server 와 동기화) */
+interface ReviewDistResult {
+  keyword: string;
+  totalProducts: number;
+  realProducts: number;
+  underThresholdCount: number;
+  underThresholdRatio: number;
+  isMajority: boolean;
+  threshold: number;
+  majorityCount: number;
+  reviewCounts: number[];
+}
+
 interface ApiResponse {
   ok: true;
   categoryId: string | null;
@@ -85,6 +98,14 @@ export function SelloBrowser({
   const [selectedKeywords, setSelectedKeywords] = useState<Set<string>>(new Set());
   const [selectedCompanyId, setSelectedCompanyId] = useState(targetCompanyId);
 
+  // 리뷰 분포 분석 결과 (사용자 핵심 use case: <500 리뷰가 10개 이상인지)
+  // 키: 키워드 / 값: 'pending' = 분석중, 'error' = 실패, 객체 = 성공
+  const [reviewDist, setReviewDist] = useState<
+    Map<string, 'pending' | 'error' | ReviewDistResult>
+  >(new Map());
+  const [bulkAnalyzing, setBulkAnalyzing] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 });
+
   // ── 초기 로드 (대분류만) ──
   useEffect(() => {
     void load('');
@@ -120,6 +141,66 @@ export function SelloBrowser({
     const next = selected.slice(0, level);
     setSelected(next);
     void load(next.join('>'));
+  }
+
+  // ── 리뷰 분포 분석 (사장님 핵심 use case) ──
+  // 키워드 1개당 셀록홈즈 사용량 1회 차감.
+  async function analyzeOne(keyword: string): Promise<void> {
+    setReviewDist((prev) => {
+      const next = new Map(prev);
+      next.set(keyword, 'pending');
+      return next;
+    });
+    try {
+      const res = await fetch(
+        `/api/sellochomes/keyword-reviews?keyword=${encodeURIComponent(keyword)}`,
+      );
+      const body = (await res.json()) as
+        | { ok: true; distribution: ReviewDistResult }
+        | { ok: false; error: string };
+      setReviewDist((prev) => {
+        const next = new Map(prev);
+        if (body.ok) next.set(keyword, body.distribution);
+        else next.set(keyword, 'error');
+        return next;
+      });
+    } catch {
+      setReviewDist((prev) => {
+        const next = new Map(prev);
+        next.set(keyword, 'error');
+        return next;
+      });
+    }
+  }
+
+  // 필터 통과한 키워드 일괄 분석 — 순차 호출 (사용량 한 번에 다 쓰지 않게).
+  // 이미 분석된 건 스킵.
+  async function analyzeAllFiltered(targets: Keyword[]): Promise<void> {
+    const pending = targets.filter((k) => {
+      const cur = reviewDist.get(k.keyword);
+      return cur === undefined || cur === 'error';
+    });
+    if (pending.length === 0) return;
+
+    if (
+      !window.confirm(
+        `${pending.length}개 키워드 분석 — 셀록홈즈 사용량 ${pending.length}회 차감됩니다. 진행할까요?`,
+      )
+    ) {
+      return;
+    }
+
+    setBulkAnalyzing(true);
+    setBulkProgress({ done: 0, total: pending.length });
+    for (let i = 0; i < pending.length; i++) {
+      const target = pending[i];
+      if (!target) continue;
+      // 순차 — sello rate-limit 방지
+      // eslint-disable-next-line no-await-in-loop
+      await analyzeOne(target.keyword);
+      setBulkProgress({ done: i + 1, total: pending.length });
+    }
+    setBulkAnalyzing(false);
   }
 
   // ── 필터 적용 ──
@@ -228,6 +309,29 @@ export function SelloBrowser({
                 )}
               </h2>
             </div>
+            {filtered.length > 0 && (
+              <div className="flex items-center gap-2">
+                {bulkAnalyzing && (
+                  <span className="text-xs text-navy-500">
+                    분석 중 {bulkProgress.done}/{bulkProgress.total}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void analyzeAllFiltered(filtered)}
+                  disabled={bulkAnalyzing}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-50"
+                  title={`필터 통과한 ${filtered.length}개 키워드의 실제 리뷰 분포 분석. 셀록홈즈 사용량 ${filtered.length}회 차감.`}
+                >
+                  {bulkAnalyzing ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <span>🎯</span>
+                  )}
+                  필터 통과 {filtered.length}개 일괄 분석
+                </button>
+              </div>
+            )}
           </div>
 
           {/* 필터 */}
@@ -323,6 +427,9 @@ export function SelloBrowser({
                     <th className="px-2 py-2 text-right" title="평균 / 최대 — 차이가 크면 1~2개 큰 상품이 평균을 부풀린 상태 (실제 진입은 쉬울 수 있음)">
                       쿠팡 리뷰 <span className="text-[9px] font-normal text-navy-400">평균/최대</span>
                     </th>
+                    <th className="px-2 py-2 text-center" title="실제 1페이지 상품 중 리뷰 500미만 개수 — 10개 이상이면 진입 가능 시장">
+                      리뷰 분포 <span className="text-[9px] font-normal text-navy-400">&lt;500</span>
+                    </th>
                     <th className="px-2 py-2 text-right">쿠팡 로켓%</th>
                     <th className="px-2 py-2 text-right">쿠팡 상품수</th>
                     <th className="px-2 py-2 text-right">평균가</th>
@@ -388,12 +495,61 @@ export function SelloBrowser({
                                 ? 'font-semibold text-emerald-700'
                                 : 'text-navy-800';
                             return (
-                              <span title={skewed ? '큰 상품 1~2개가 평균을 부풀린 상태 — 배치 분석으로 실제 분포 확인 권장' : ''}>
+                              <span title={skewed ? '큰 상품 1~2개가 평균을 부풀린 상태 — 분석 버튼으로 실제 분포 확인 권장' : ''}>
                                 <span className={avgClass}>{avg.toLocaleString('ko-KR')}</span>
                                 <span className="mx-1 text-navy-300">/</span>
                                 <span className="text-navy-500">{max.toLocaleString('ko-KR')}</span>
                                 {skewed && <span className="ml-1 text-amber-600">⚠️</span>}
                               </span>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-2 py-1.5 text-center">
+                          {(() => {
+                            const dist = reviewDist.get(k.keyword);
+                            if (dist === 'pending') {
+                              return <Loader2 className="mx-auto h-3.5 w-3.5 animate-spin text-navy-400" />;
+                            }
+                            if (dist === 'error') {
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => void analyzeOne(k.keyword)}
+                                  className="text-[10px] text-red-600 hover:underline"
+                                >
+                                  ↻ 재시도
+                                </button>
+                              );
+                            }
+                            if (dist) {
+                              const { underThresholdCount, realProducts, isMajority } = dist;
+                              return (
+                                <span
+                                  className={
+                                    isMajority
+                                      ? 'rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] font-bold text-emerald-700'
+                                      : 'rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-bold text-red-700'
+                                  }
+                                  title={
+                                    isMajority
+                                      ? `진입 가능: ${realProducts}개 중 ${underThresholdCount}개가 500미만 (10개 이상)`
+                                      : `진입 어려움: ${realProducts}개 중 ${underThresholdCount}개만 500미만 (10개 미만)`
+                                  }
+                                >
+                                  {isMajority ? '🟢' : '🔴'} {underThresholdCount}/{realProducts}
+                                </span>
+                              );
+                            }
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => void analyzeOne(k.keyword)}
+                                disabled={bulkAnalyzing}
+                                className="rounded border border-navy-200 px-2 py-0.5 text-[10px] text-navy-600 hover:border-amber-400 hover:bg-amber-50 hover:text-amber-700 disabled:opacity-50"
+                                title="셀록홈즈 사용량 1회 차감 — 실제 1페이지 상품 리뷰 분포 분석"
+                              >
+                                🎯 분석
+                              </button>
                             );
                           })()}
                         </td>

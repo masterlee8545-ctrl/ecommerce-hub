@@ -315,3 +315,184 @@ export async function hasSellochomesCookie(): Promise<boolean> {
     return false;
   }
 }
+
+// ─────────────────────────────────────────────────────────
+// 쿠팡 키워드 1페이지 상품 분석 (직접 API)
+// ─────────────────────────────────────────────────────────
+//
+// 셀록홈즈 사용량 1회 차감 = 1키워드 분석 (사장님 구독 한도 내)
+// 이 API 가 주는 데이터는 셀록홈즈가 화면에 노출하는 것과 동일.
+// 셀러라이프 확장이 필요한 판매량/조회수는 null 로 옴 (우리는 리뷰만 필요).
+
+const KEYWORD_INFO_BASE = 'https://sellochomes.co.kr/api/v1/sellerlife/keyword-analysis/coupang-keyword';
+
+export interface CoupangKeywordItem {
+  url: string;
+  isAd: boolean;
+  isPb: boolean;
+  rank: number | null;
+  price: number | null;
+  title: string;
+  itemid: string;
+  prdImg: string;
+  coupangId: string;
+  reviewCnt: number;
+  hasBrandTag: unknown | null;
+  discountRate: number | null;
+  /** 셀러라이프 확장이 채우는 데이터 — 이 API 응답에선 null */
+  monthlySales: unknown | null;
+  /** 셀러라이프 확장이 채우는 데이터 — 이 API 응답에선 null */
+  monthlyViews: unknown | null;
+  discountPrice: number | null;
+  /** 셀러라이프 확장이 채우는 데이터 — 이 API 응답에선 null */
+  monthlyAmount: unknown | null;
+  /** 셀러라이프 확장이 채우는 데이터 — 이 API 응답에선 null */
+  monthlyCvRate: unknown | null;
+  originalPrice: number | null;
+  /** 'rocket' | 'merchant' | 'domestic' | 'foreign' | ... */
+  shippingMethod: string;
+  /** '로켓배송' | '판매자로켓' | '국내배송' | '해외배송' */
+  koShippingMethod: string;
+  hasRecommendedTag: unknown | null;
+  expectedShippingDate: number;
+}
+
+export interface CoupangKeywordInfoResponse {
+  success: boolean;
+  data: {
+    _result: boolean;
+    page: number;
+    pageKey: string;
+    /** 응답에 포함된 상품 수 (광고 포함) */
+    totalProducts: number;
+    /** 쿠팡 검색 결과 전체 수 */
+    totalCnt: number;
+    items: CoupangKeywordItem[];
+  };
+}
+
+/**
+ * 키워드 1페이지 상품 정보 직접 조회 (~1초/키워드).
+ *
+ * Chrome/Playwright 안 쓰고 셀록홈즈 자체 API 직접 호출.
+ * 사용량 1회 차감 (사장님 구독 한도 내).
+ */
+export async function fetchCoupangKeywordInfo(
+  keyword: string,
+  page = 1,
+): Promise<CoupangKeywordInfoResponse> {
+  const trimmed = keyword.trim();
+  if (!trimmed) {
+    throw new SellochomesError('키워드가 비어있습니다.', 'bad_response');
+  }
+
+  const url = new URL(`${KEYWORD_INFO_BASE}/coupangKeywordInfo`);
+  url.searchParams.set('keyword', trimmed);
+  url.searchParams.set('page', String(page));
+
+  const cookieHeader = await getCookieHeader();
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), {
+      headers: {
+        Cookie: cookieHeader,
+        Accept: 'application/json, text/plain, */*',
+        Referer: 'https://sellochomes.co.kr/sellerlife/coupang-analysis-keyword/',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
+      },
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(tid);
+    throw new SellochomesError(
+      `셀록홈즈 키워드 분석 API 연결 실패: ${err instanceof Error ? err.message : String(err)}`,
+      'network',
+    );
+  }
+  clearTimeout(tid);
+
+  if (res.status === 401 || res.status === 403) {
+    throw new SellochomesError(
+      '셀록홈즈 세션이 만료됐습니다. /settings 에서 쿠키를 재발급하세요.',
+      'auth_expired',
+    );
+  }
+  if (!res.ok) {
+    throw new SellochomesError(
+      `셀록홈즈 키워드 분석 API 응답 실패 (HTTP ${res.status})`,
+      'bad_response',
+    );
+  }
+
+  const body = (await res.json()) as CoupangKeywordInfoResponse;
+  if (!body.success || !body.data) {
+    throw new SellochomesError('셀록홈즈 키워드 분석 응답이 비정상입니다.', 'bad_response');
+  }
+  return body;
+}
+
+// ─────────────────────────────────────────────────────────
+// 리뷰 분포 분석 (사장님 핵심 use case)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * 사장님 기본 기준: 리뷰 500미만이 10개 이상이면 진입 가능 시장.
+ *  - threshold(=500): 리뷰 미만 기준
+ *  - majorityCount(=10): 그 이상이어야 "진입 가능" 으로 판단
+ */
+export interface ReviewDistribution {
+  keyword: string;
+  /** API 응답 전체 상품 수 (광고 포함) */
+  totalProducts: number;
+  /** 광고/PB 제외한 일반 상품 수 (분석 대상) */
+  realProducts: number;
+  /** 일반 상품 중 리뷰 < threshold 인 개수 */
+  underThresholdCount: number;
+  /** underThresholdCount / realProducts (0~1) */
+  underThresholdRatio: number;
+  /** underThresholdCount >= majorityCount 면 true (= "진입 가능" 시장) */
+  isMajority: boolean;
+  /** 사용한 임계값 — UI 표시용 */
+  threshold: number;
+  /** 사용한 majority 기준 — UI 표시용 */
+  majorityCount: number;
+  /** 디버깅용 — 일반 상품들의 리뷰 수 배열 */
+  reviewCounts: number[];
+}
+
+/**
+ * fetchCoupangKeywordInfo 응답에서 리뷰 분포 계산.
+ *
+ * 광고/PB 제외 — 진짜 자연 검색 결과만 분석 대상.
+ */
+export function analyzeReviewDistribution(
+  response: CoupangKeywordInfoResponse,
+  keyword: string,
+  options?: { threshold?: number; majorityCount?: number },
+): ReviewDistribution {
+  const threshold = options?.threshold ?? 500;
+  const majorityCount = options?.majorityCount ?? 10;
+
+  const items = response.data.items;
+  const realItems = items.filter((it) => !it.isAd && !it.isPb);
+  const reviewCounts = realItems.map((it) => it.reviewCnt);
+  const underThresholdCount = reviewCounts.filter((r) => r < threshold).length;
+  const realProducts = realItems.length;
+  const underThresholdRatio = realProducts > 0 ? underThresholdCount / realProducts : 0;
+
+  return {
+    keyword,
+    totalProducts: items.length,
+    realProducts,
+    underThresholdCount,
+    underThresholdRatio,
+    isMajority: underThresholdCount >= majorityCount,
+    threshold,
+    majorityCount,
+    reviewCounts,
+  };
+}
