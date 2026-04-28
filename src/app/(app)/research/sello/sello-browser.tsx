@@ -9,11 +9,11 @@
  */
 'use client';
 
-import { useEffect, useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 
 import { useRouter } from 'next/navigation';
 
-import { AlertCircle, Loader2, ShoppingCart } from 'lucide-react';
+import { AlertCircle, Loader2, ShoppingCart, StopCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { bulkAddToBasketAction } from '@/lib/products/actions';
@@ -75,6 +75,33 @@ const DEFAULT_MIN_SEARCH = 5000;
 const DEFAULT_MAX_SEARCH = 100000;
 const DEFAULT_MAX_COUPANG_REVIEW = 500;
 
+// 리뷰 분포 분석 결과 — F5 새로고침 후에도 유지되도록 localStorage 저장.
+// 셀록홈즈 사용량(550/월) 절약 측면에서도 유리. 만료 없이 영구 저장 — 재분석은
+// 명시적으로 다시 버튼 누를 때만 (사용량 보호).
+const REVIEW_DIST_STORAGE_KEY = 'sellochomes:reviewDistributions:v1';
+
+function loadStoredDistributions(): Record<string, ReviewDistResult> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(REVIEW_DIST_STORAGE_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as Record<string, ReviewDistResult>;
+  } catch {
+    return {};
+  }
+}
+
+function saveOneDistribution(keyword: string, dist: ReviewDistResult): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const cur = loadStoredDistributions();
+    cur[keyword] = dist;
+    window.localStorage.setItem(REVIEW_DIST_STORAGE_KEY, JSON.stringify(cur));
+  } catch {
+    // QuotaExceeded 등 — 메모리에는 유지되니 조용히 무시
+  }
+}
+
 export function SelloBrowser({
   targetCompanyId,
   userCompanies,
@@ -105,6 +132,16 @@ export function SelloBrowser({
   >(new Map());
   const [bulkAnalyzing, setBulkAnalyzing] = useState(false);
   const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 });
+
+  // 정지 신호 — useState 쓰면 closure 에 갇혀 루프가 못 봄. ref 로 즉시 반영.
+  const stopRequestedRef = useRef(false);
+
+  // 마운트 시 localStorage 에서 이전 분석 결과 복원 (F5 후에도 유지)
+  useEffect(() => {
+    const stored = loadStoredDistributions();
+    if (Object.keys(stored).length === 0) return;
+    setReviewDist(new Map(Object.entries(stored)));
+  }, []);
 
   // ── 초기 로드 (대분류만) ──
   useEffect(() => {
@@ -145,6 +182,7 @@ export function SelloBrowser({
 
   // ── 리뷰 분포 분석 (사장님 핵심 use case) ──
   // 키워드 1개당 셀록홈즈 사용량 1회 차감.
+  // 성공 시 localStorage 에도 저장 → F5 후에도 유지.
   async function analyzeOne(keyword: string): Promise<void> {
     setReviewDist((prev) => {
       const next = new Map(prev);
@@ -160,8 +198,12 @@ export function SelloBrowser({
         | { ok: false; error: string };
       setReviewDist((prev) => {
         const next = new Map(prev);
-        if (body.ok) next.set(keyword, body.distribution);
-        else next.set(keyword, 'error');
+        if (body.ok) {
+          next.set(keyword, body.distribution);
+          saveOneDistribution(keyword, body.distribution);
+        } else {
+          next.set(keyword, 'error');
+        }
         return next;
       });
     } catch {
@@ -174,7 +216,7 @@ export function SelloBrowser({
   }
 
   // 필터 통과한 키워드 일괄 분석 — 순차 호출 (사용량 한 번에 다 쓰지 않게).
-  // 이미 분석된 건 스킵.
+  // 이미 분석된 건 스킵. 정지 버튼 눌리면 즉시 break (다음 키워드부터 안 함).
   async function analyzeAllFiltered(targets: Keyword[]): Promise<void> {
     const pending = targets.filter((k) => {
       const cur = reviewDist.get(k.keyword);
@@ -190,9 +232,14 @@ export function SelloBrowser({
       return;
     }
 
+    stopRequestedRef.current = false;
     setBulkAnalyzing(true);
     setBulkProgress({ done: 0, total: pending.length });
     for (let i = 0; i < pending.length; i++) {
+      if (stopRequestedRef.current) {
+        // 사용자가 정지 누름 — 다음 키워드부터 안 함 (현재 진행 중인 건 어차피 await 끝남)
+        break;
+      }
       const target = pending[i];
       if (!target) continue;
       // 순차 — sello rate-limit 방지
@@ -201,6 +248,7 @@ export function SelloBrowser({
       setBulkProgress({ done: i + 1, total: pending.length });
     }
     setBulkAnalyzing(false);
+    stopRequestedRef.current = false;
   }
 
   // ── 필터 적용 ──
@@ -316,20 +364,29 @@ export function SelloBrowser({
                     분석 중 {bulkProgress.done}/{bulkProgress.total}
                   </span>
                 )}
-                <button
-                  type="button"
-                  onClick={() => void analyzeAllFiltered(filtered)}
-                  disabled={bulkAnalyzing}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-50"
-                  title={`필터 통과한 ${filtered.length}개 키워드의 실제 리뷰 분포 분석. 셀록홈즈 사용량 ${filtered.length}회 차감.`}
-                >
-                  {bulkAnalyzing ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
+                {bulkAnalyzing ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopRequestedRef.current = true;
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-red-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-600"
+                    title="다음 키워드부터 분석 중단 (현재 진행 중인 1건은 끝까지 마침)"
+                  >
+                    <StopCircle className="h-3.5 w-3.5" />
+                    정지
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void analyzeAllFiltered(filtered)}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600"
+                    title={`필터 통과한 ${filtered.length}개 중 미분석 키워드만 분석. 1키워드당 셀록홈즈 사용량 1회 차감 (이미 분석된 건 스킵).`}
+                  >
                     <span>🎯</span>
-                  )}
-                  필터 통과 {filtered.length}개 일괄 분석
-                </button>
+                    필터 통과 {filtered.length}개 일괄 분석
+                  </button>
+                )}
               </div>
             )}
           </div>
