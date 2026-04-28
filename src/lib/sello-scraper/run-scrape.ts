@@ -29,9 +29,16 @@ import type { SelloScrapedJson, SelloScrapedRow } from './adapter';
 const DEFAULT_USER_DATA = 'C:\\sello-user-data';
 const DEFAULT_PROFILE_DIR = 'Default';
 const PAGE_URL = 'https://sellochomes.co.kr/sellerlife/coupang-analysis-keyword';
+
+// ── 풀(full) 모드: 셀러라이프 확장이 판매량/조회수까지 채울 때까지 대기 (~3분)
 const COLLECTION_TIMEOUT_MS = 180_000;
 const TARGET_ROWS = 20;
 const MIN_FILLED = 18;
+
+// ── 패스트(fast) 모드: 리뷰만 가져옴 (~10~20초) — 리뷰 분포 분석용
+//    review 값은 페이지 렌더 시 즉시 HTML 에 박혀있어 확장 fill 불필요
+const FAST_TIMEOUT_MS = 30_000;
+const FAST_MIN_WITH_REVIEWS = 18;
 
 // ─────────────────────────────────────────────────────────
 // 싱글톤 락 — 동시 실행 차단
@@ -164,6 +171,20 @@ async function countFilled(page: Page): Promise<{ total: number; filled: number 
   })()`) as Promise<{ total: number; filled: number }>;
 }
 
+/** 리뷰가 채워진 행 수 — fast 모드 종료 조건. review 는 0 도 valid (신상품). */
+async function countWithReviews(page: Page): Promise<{ total: number; withReviews: number }> {
+  return page.evaluate(`(() => {
+    const rows = Array.from(document.querySelectorAll("ul.td[data-rank]"));
+    let withReviews = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const num = rows[i].querySelector("li.review .num");
+      const raw = num ? (num.textContent || "").trim() : "";
+      if (raw && raw !== "-") withReviews += 1;
+    }
+    return { total: rows.length, withReviews: withReviews };
+  })()`) as Promise<{ total: number; withReviews: number }>;
+}
+
 // ─────────────────────────────────────────────────────────
 // 메인 함수
 // ─────────────────────────────────────────────────────────
@@ -192,6 +213,19 @@ export async function runSelloScrape(
      * 기본값: SELLO_SCRAPE_MODE env (없으면 'offscreen' — 성능·UX 균형)
      */
     mode?: 'visible' | 'minimized' | 'offscreen' | 'headless';
+    /**
+     * fast 모드 — 리뷰만 가져오고 즉시 종료 (~10~20초/키워드).
+     *
+     * 기본값: false (기존 동작 유지 — 판매량/조회수까지 ~3분 대기).
+     *
+     * true 설정 시:
+     * - 셀러라이프 확장이 채우는 pv-month/sales/cv-month 안 기다림
+     * - 검색 후 18/20 row 의 review 만 채워지면 즉시 parse 후 종료
+     * - 결과 JSON 의 pvMonth/sales/cvMonth 필드는 "-" 로 남음
+     *
+     * 용도: 카테고리 리뷰 분포 분석 (500미만 비율 등) — 리뷰 외 디테일 불필요할 때.
+     */
+    fastMode?: boolean;
   },
 ): Promise<ScrapeResult> {
   const trimmedKw = keyword.trim();
@@ -428,8 +462,10 @@ export async function runSelloScrape(
     }
 
     // ── 수집 대기 ───────────────────────────────────────
-    log(`수집 대기 (최대 ${COLLECTION_TIMEOUT_MS / 1000}s)...`);
-    const deadline = Date.now() + COLLECTION_TIMEOUT_MS;
+    const fastMode = options?.fastMode === true;
+    const timeoutMs = fastMode ? FAST_TIMEOUT_MS : COLLECTION_TIMEOUT_MS;
+    log(`수집 대기 (모드=${fastMode ? 'fast(리뷰만)' : 'full(판매량까지)'}, 최대 ${timeoutMs / 1000}s)...`);
+    const deadline = Date.now() + timeoutMs;
     let last = { total: 0, filled: 0 };
 
     while (Date.now() < deadline) {
@@ -438,20 +474,35 @@ export async function runSelloScrape(
         releaseLock();
         return { ok: false, reason: 'other', error: '사용자가 중단함' };
       }
-      const status = await countFilled(page);
-      if (status.total !== last.total || status.filled !== last.filled) {
-        log(`total=${status.total} filled=${status.filled}`);
-        last = status;
+
+      if (fastMode) {
+        // fast: review 채워진 행만 카운트. 리뷰는 페이지 렌더 시 즉시 박힘.
+        const status = await countWithReviews(page);
+        if (status.total !== last.total || status.withReviews !== last.filled) {
+          log(`total=${status.total} withReviews=${status.withReviews}`);
+          last = { total: status.total, filled: status.withReviews };
+        }
+        if (status.total >= TARGET_ROWS && status.withReviews >= FAST_MIN_WITH_REVIEWS) {
+          log('수집 완료 (fast)');
+          break;
+        }
+      } else {
+        // full: pv-month 까지 채워질 때까지 대기 (확장이 쿠팡 wing API 호출).
+        const status = await countFilled(page);
+        if (status.total !== last.total || status.filled !== last.filled) {
+          log(`total=${status.total} filled=${status.filled}`);
+          last = status;
+        }
+        if (status.total >= TARGET_ROWS && status.filled >= MIN_FILLED) {
+          log('수집 완료');
+          break;
+        }
       }
-      if (status.total >= TARGET_ROWS && status.filled >= MIN_FILLED) {
-        log('수집 완료');
-        break;
-      }
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(fastMode ? 1000 : 2000);
     }
 
     const rows = await parseRows(page);
-    log(`${rows.length}개 행 추출 (filled=${last.filled})`);
+    log(`${rows.length}개 행 추출 (${fastMode ? 'withReviews' : 'filled'}=${last.filled})`);
 
     // ── JSON 저장 ──────────────────────────────────────
     const jsonPath = path.join(outputDir, `${trimmedKw}.json`);

@@ -32,6 +32,7 @@ interface Keyword {
   c_pCnt: number;
   c_avgPrice: number | null;
   c_avgReviewCnt: number;
+  c_maxReviewCnt: number;
   c_rocketRatio: number;
   compIdx: string | null;
   competition: number;
@@ -319,7 +320,9 @@ export function SelloBrowser({
                     <th className="px-2 py-2 text-left">키워드</th>
                     <th className="px-2 py-2 text-right">월검색</th>
                     <th className="px-2 py-2 text-right">경쟁</th>
-                    <th className="px-2 py-2 text-right">쿠팡 평균 리뷰</th>
+                    <th className="px-2 py-2 text-right" title="평균 / 최대 — 차이가 크면 1~2개 큰 상품이 평균을 부풀린 상태 (실제 진입은 쉬울 수 있음)">
+                      쿠팡 리뷰 <span className="text-[9px] font-normal text-navy-400">평균/최대</span>
+                    </th>
                     <th className="px-2 py-2 text-right">쿠팡 로켓%</th>
                     <th className="px-2 py-2 text-right">쿠팡 상품수</th>
                     <th className="px-2 py-2 text-right">평균가</th>
@@ -373,14 +376,26 @@ export function SelloBrowser({
                             {k.compIdx && <span className="ml-0.5 text-[9px]">({k.compIdx})</span>}
                           </span>
                         </td>
-                        <td
-                          className={`px-2 py-1.5 text-right tabular-nums ${
-                            k.c_avgReviewCnt < DEFAULT_MAX_COUPANG_REVIEW
-                              ? 'font-semibold text-emerald-700'
-                              : 'text-navy-800'
-                          }`}
-                        >
-                          {k.c_avgReviewCnt.toLocaleString('ko-KR')}
+                        <td className="px-2 py-1.5 text-right tabular-nums">
+                          {(() => {
+                            const avg = k.c_avgReviewCnt;
+                            const max = k.c_maxReviewCnt;
+                            // skew = max 가 평균의 5배 넘으면 분포가 한쪽으로 쏠려있음.
+                            //        평균만 보고 판단하면 잘못된 결론 → ⚠️ 표시.
+                            const skewed = avg > 0 && max / avg >= 5;
+                            const avgClass =
+                              avg < DEFAULT_MAX_COUPANG_REVIEW
+                                ? 'font-semibold text-emerald-700'
+                                : 'text-navy-800';
+                            return (
+                              <span title={skewed ? '큰 상품 1~2개가 평균을 부풀린 상태 — 배치 분석으로 실제 분포 확인 권장' : ''}>
+                                <span className={avgClass}>{avg.toLocaleString('ko-KR')}</span>
+                                <span className="mx-1 text-navy-300">/</span>
+                                <span className="text-navy-500">{max.toLocaleString('ko-KR')}</span>
+                                {skewed && <span className="ml-1 text-amber-600">⚠️</span>}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="px-2 py-1.5 text-right tabular-nums text-navy-600">
                           {Math.round(k.c_rocketRatio * PERCENT)}%
@@ -438,7 +453,9 @@ function BulkAddForm({
     const lines: string[] = ['셀록홈즈 카테고리 소싱'];
     lines.push(`📊 월검색: ${k.monthlyQcCnt.toLocaleString('ko-KR')}`);
     lines.push(`🏆 경쟁: ${k.competition.toFixed(1)}${k.compIdx ? ` (${k.compIdx})` : ''}`);
-    lines.push(`⭐ 쿠팡 평균 리뷰: ${k.c_avgReviewCnt.toLocaleString('ko-KR')}`);
+    lines.push(
+      `⭐ 쿠팡 리뷰: 평균 ${k.c_avgReviewCnt.toLocaleString('ko-KR')} / 최대 ${k.c_maxReviewCnt.toLocaleString('ko-KR')}`,
+    );
     lines.push(`🚀 쿠팡 로켓: ${Math.round(k.c_rocketRatio * PERCENT)}%`);
     lines.push(`📦 쿠팡 상품수: ${k.c_pCnt}`);
     if (k.c_avgPrice) lines.push(`💰 쿠팡 평균가: ₩${k.c_avgPrice.toLocaleString('ko-KR')}`);

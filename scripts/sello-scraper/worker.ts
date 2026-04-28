@@ -98,8 +98,13 @@ async function processOneJob(): Promise<'processed' | 'idle'> {
     }
 
     // 2) 실제 스크래핑
+    //    fastMode=true → 리뷰만 가져오고 즉시 종료 (~15s/키워드, 기존 ~3분 대비 12배 빠름)
+    //    배치 분석 use case 는 리뷰 분포가 핵심 → fast 가 기본.
+    //    판매량/조회수 디테일이 필요하면 SELLO_FAST_MODE=0 으로 풀모드 강제.
+    const fastMode = process.env['SELLO_FAST_MODE'] !== '0';
     const startedAt = Date.now();
     const result = await runSelloScrape(job.keyword, {
+      fastMode,
       onProgress: (m) => console.log(`[worker]   ${m}`),
     });
     const durationSec = Math.round((Date.now() - startedAt) / 1000);
