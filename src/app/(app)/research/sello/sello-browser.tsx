@@ -474,12 +474,24 @@ export function SelloBrowser({
                 ) : (
                   <button
                     type="button"
-                    onClick={() => void analyzeAllFiltered(filtered)}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600"
-                    title={`필터 통과한 ${filtered.length}개 중 미분석 키워드만 분석. 1키워드당 셀록홈즈 사용량 1회 차감 (이미 분석된 건 스킵).`}
+                    onClick={() => {
+                      const targets = sortedFiltered.filter((k) =>
+                        selectedKeywords.has(k.keyword),
+                      );
+                      void analyzeAllFiltered(targets);
+                    }}
+                    disabled={selectedKeywords.size === 0}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-navy-300"
+                    title={
+                      selectedKeywords.size === 0
+                        ? '먼저 분석할 키워드를 체크박스로 선택하세요 (사용량 보호 — 명시적으로 선택한 것만 처리).'
+                        : `선택한 ${selectedKeywords.size}개 키워드 분석. 1키워드당 셀록홈즈 사용량 1회 차감 (이미 분석된 건 스킵).`
+                    }
                   >
                     <span>🎯</span>
-                    필터 통과 {filtered.length}개 일괄 분석
+                    {selectedKeywords.size === 0
+                      ? '선택한 키워드 일괄 분석'
+                      : `선택한 ${selectedKeywords.size}개 일괄 분석`}
                   </button>
                 )}
               </div>
