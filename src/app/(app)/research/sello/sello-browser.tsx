@@ -56,6 +56,17 @@ interface ReviewDistResult {
   reviewCounts: number[];
 }
 
+/** 정렬 가능한 칼럼 키 */
+type SortColumn =
+  | 'searchVolume'   // 월검색
+  | 'competition'    // 경쟁
+  | 'avgReview'      // 쿠팡 리뷰 (평균)
+  | 'maxReview'      // 쿠팡 리뷰 (최대)
+  | 'reviewDist'     // 리뷰 분포 (<500 개수)
+  | 'rocketRatio'    // 쿠팡 로켓%
+  | 'productCount'   // 쿠팡 상품수
+  | 'avgPrice';      // 평균가
+
 interface ApiResponse {
   ok: true;
   categoryId: string | null;
@@ -136,12 +147,30 @@ export function SelloBrowser({
   // 정지 신호 — useState 쓰면 closure 에 갇혀 루프가 못 봄. ref 로 즉시 반영.
   const stopRequestedRef = useRef(false);
 
+  // Shift+클릭 범위 선택용 — 마지막 클릭한 행의 (sortedFiltered 기준) index
+  const lastClickedIdxRef = useRef<number | null>(null);
+
+  // 정렬 상태 (null = 기본 순서 / 셀록홈즈가 준 순서)
+  const [sortBy, setSortBy] = useState<{
+    column: SortColumn;
+    direction: 'asc' | 'desc';
+  } | null>(null);
+
   // 마운트 시 localStorage 에서 이전 분석 결과 복원 (F5 후에도 유지)
   useEffect(() => {
     const stored = loadStoredDistributions();
     if (Object.keys(stored).length === 0) return;
     setReviewDist(new Map(Object.entries(stored)));
   }, []);
+
+  // 칼럼 헤더 클릭 → 정렬 토글 (asc → desc → 해제)
+  function toggleSort(column: SortColumn): void {
+    setSortBy((prev) => {
+      if (!prev || prev.column !== column) return { column, direction: 'desc' };
+      if (prev.direction === 'desc') return { column, direction: 'asc' };
+      return null; // 같은 칼럼 3번째 클릭 → 정렬 해제 (원래 순서)
+    });
+  }
 
   // ── 초기 로드 (대분류만) ──
   useEffect(() => {
@@ -262,6 +291,72 @@ export function SelloBrowser({
       return true;
     });
   }, [keywords, minSearch, maxSearch, maxCoupangReview, excludeBrand]);
+
+  // ── 정렬 적용 (필터 다음 단계) ──
+  // sortBy 가 null 이면 필터 결과 순서 그대로 (= 셀록홈즈 기본 정렬)
+  const sortedFiltered = useMemo(() => {
+    if (!sortBy) return filtered;
+    const dir = sortBy.direction === 'asc' ? 1 : -1;
+
+    function valueOf(k: Keyword): number {
+      switch (sortBy!.column) {
+        case 'searchVolume':
+          return k.monthlyQcCnt;
+        case 'competition':
+          return k.competition;
+        case 'avgReview':
+          return k.c_avgReviewCnt;
+        case 'maxReview':
+          return k.c_maxReviewCnt;
+        case 'reviewDist': {
+          // 분석 안 된 키워드는 항상 끝으로 (정렬 방향 무관하게 sentinel)
+          const dist = reviewDist.get(k.keyword);
+          if (typeof dist !== 'object') return Number.NEGATIVE_INFINITY * dir;
+          return dist.underThresholdCount;
+        }
+        case 'rocketRatio':
+          return k.c_rocketRatio;
+        case 'productCount':
+          return k.c_pCnt;
+        case 'avgPrice':
+          return k.c_avgPrice ?? 0;
+        default:
+          return 0;
+      }
+    }
+
+    return [...filtered].sort((a, b) => (valueOf(a) - valueOf(b)) * dir);
+  }, [filtered, sortBy, reviewDist]);
+
+  // Shift+클릭 범위 선택. 같은 행 두 번 클릭 또는 shift 없이 클릭은 단일 토글.
+  function handleRowCheckboxClick(
+    e: React.MouseEvent<HTMLInputElement>,
+    keyword: string,
+    index: number,
+  ): void {
+    if (e.shiftKey && lastClickedIdxRef.current !== null) {
+      e.preventDefault();
+      const start = Math.min(lastClickedIdxRef.current, index);
+      const end = Math.max(lastClickedIdxRef.current, index);
+      const rangeKw = sortedFiltered.slice(start, end + 1).map((k) => k.keyword);
+      setSelectedKeywords((prev) => {
+        const next = new Set(prev);
+        // 범위 안이 모두 선택돼있으면 해제, 아니면 모두 선택
+        const allSelected = rangeKw.every((kw) => next.has(kw));
+        if (allSelected) rangeKw.forEach((kw) => next.delete(kw));
+        else rangeKw.forEach((kw) => next.add(kw));
+        return next;
+      });
+    } else {
+      setSelectedKeywords((prev) => {
+        const next = new Set(prev);
+        if (next.has(keyword)) next.delete(keyword);
+        else next.add(keyword);
+        return next;
+      });
+    }
+    lastClickedIdxRef.current = index;
+  }
 
   const breadcrumb = selected.length > 0 ? selected.join(' > ') : '최상위';
 
@@ -452,6 +547,13 @@ export function SelloBrowser({
             />
           )}
 
+          {/* 사용 안내 */}
+          {filtered.length > 0 && (
+            <div className="mb-2 text-[11px] text-navy-400">
+              💡 칼럼 헤더 클릭으로 정렬 (▲ 오름차순 / ▼ 내림차순). Shift+체크박스 클릭으로 범위 선택.
+            </div>
+          )}
+
           {/* 테이블 */}
           {filtered.length === 0 ? (
             <div className="rounded-md border border-amber-200 bg-amber-50/50 p-4 text-sm text-amber-800">
@@ -479,22 +581,32 @@ export function SelloBrowser({
                       />
                     </th>
                     <th className="px-2 py-2 text-left">키워드</th>
-                    <th className="px-2 py-2 text-right">월검색</th>
-                    <th className="px-2 py-2 text-right">경쟁</th>
-                    <th className="px-2 py-2 text-right" title="평균 / 최대 — 차이가 크면 1~2개 큰 상품이 평균을 부풀린 상태 (실제 진입은 쉬울 수 있음)">
-                      쿠팡 리뷰 <span className="text-[9px] font-normal text-navy-400">평균/최대</span>
-                    </th>
-                    <th className="px-2 py-2 text-center" title="실제 1페이지 상품 중 리뷰 500미만 개수 — 10개 이상이면 진입 가능 시장">
-                      리뷰 분포 <span className="text-[9px] font-normal text-navy-400">&lt;500</span>
-                    </th>
-                    <th className="px-2 py-2 text-right">쿠팡 로켓%</th>
-                    <th className="px-2 py-2 text-right">쿠팡 상품수</th>
-                    <th className="px-2 py-2 text-right">평균가</th>
+                    <SortableTh label="월검색" column="searchVolume" align="right" sortBy={sortBy} onClick={toggleSort} />
+                    <SortableTh label="경쟁" column="competition" align="right" sortBy={sortBy} onClick={toggleSort} />
+                    <SortableTh
+                      label={<>쿠팡 리뷰 <span className="text-[9px] font-normal text-navy-400">평균/최대</span></>}
+                      column="avgReview"
+                      align="right"
+                      sortBy={sortBy}
+                      onClick={toggleSort}
+                      title="클릭으로 평균 기준 정렬. 평균/최대 — 차이가 크면 1~2개 큰 상품이 평균을 부풀린 상태."
+                    />
+                    <SortableTh
+                      label={<>리뷰 분포 <span className="text-[9px] font-normal text-navy-400">&lt;500</span></>}
+                      column="reviewDist"
+                      align="center"
+                      sortBy={sortBy}
+                      onClick={toggleSort}
+                      title="실제 1페이지 상품 중 리뷰 500미만 개수 — 10개 이상이면 진입 가능 시장. 미분석 키워드는 항상 끝."
+                    />
+                    <SortableTh label="쿠팡 로켓%" column="rocketRatio" align="right" sortBy={sortBy} onClick={toggleSort} />
+                    <SortableTh label="쿠팡 상품수" column="productCount" align="right" sortBy={sortBy} onClick={toggleSort} />
+                    <SortableTh label="평균가" column="avgPrice" align="right" sortBy={sortBy} onClick={toggleSort} />
                     <th className="px-2 py-2 text-left">계절성</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((k) => {
+                  {sortedFiltered.map((k, idx) => {
                     const isSelected = selectedKeywords.has(k.keyword);
                     return (
                       <tr
@@ -507,13 +619,9 @@ export function SelloBrowser({
                           <input
                             type="checkbox"
                             checked={isSelected}
+                            onClick={(e) => handleRowCheckboxClick(e, k.keyword, idx)}
                             onChange={() => {
-                              setSelectedKeywords((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(k.keyword)) next.delete(k.keyword);
-                                else next.add(k.keyword);
-                                return next;
-                              });
+                              /* onClick 가 처리 — 여기서는 React controlled warning 방지용 */
                             }}
                           />
                         </td>
@@ -632,6 +740,45 @@ export function SelloBrowser({
         </section>
       )}
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+// 정렬 가능 칼럼 헤더
+// ─────────────────────────────────────────────────────────
+
+function SortableTh({
+  label,
+  column,
+  align,
+  sortBy,
+  onClick,
+  title,
+}: {
+  label: React.ReactNode;
+  column: SortColumn;
+  align: 'left' | 'right' | 'center';
+  sortBy: { column: SortColumn; direction: 'asc' | 'desc' } | null;
+  onClick: (col: SortColumn) => void;
+  title?: string;
+}) {
+  const active = sortBy?.column === column;
+  const arrow = !active ? '↕' : sortBy.direction === 'asc' ? '▲' : '▼';
+  const alignClass =
+    align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left';
+  return (
+    <th className={`px-2 py-2 ${alignClass}`} title={title}>
+      <button
+        type="button"
+        onClick={() => onClick(column)}
+        className={`inline-flex items-center gap-1 hover:text-violet-700 ${
+          active ? 'font-bold text-violet-700' : 'text-navy-600'
+        }`}
+      >
+        <span>{label}</span>
+        <span className={`text-[10px] ${active ? 'text-violet-700' : 'text-navy-300'}`}>{arrow}</span>
+      </button>
+    </th>
   );
 }
 
