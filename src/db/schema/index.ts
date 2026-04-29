@@ -67,3 +67,4 @@ export * from './task-history';
 export * from './tariff-presets';
 export * from './notifications';
 export * from './mcp-tokens'; // Phase B — Claude.ai MCP 인증
+export * from './system-settings'; // 전역 시스템 설정 (셀록홈즈 쿠키 등) — Vercel 인스턴스 간 공유

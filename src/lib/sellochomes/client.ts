@@ -8,10 +8,15 @@
  *
  * 인증: connect.sid 쿠키 (사용자 세션). 만료되면 `/settings` 에서 재입력.
  *
- * 쿠키 우선순위 (ItemScout 패턴 동일):
- * 1. globalThis 메모리 (설정 페이지에서 입력)
- * 2. 파일 (.data/sellochomes-cookie.json)
- * 3. 환경변수 (SELLOCHOMES_COOKIE)
+ * 쿠키 우선순위:
+ * 1. globalThis 메모리 (같은 서버리스 인스턴스 내 캐시 — 짧은 TTL)
+ * 2. DB system_settings 테이블 (Vercel 인스턴스 간 공유 — 영구 저장소)
+ * 3. 파일 (.data/sellochomes-cookie.json) — 로컬 개발용 폴백
+ * 4. 환경변수 (SELLOCHOMES_COOKIE) — 최후 폴백
+ *
+ * 왜 DB 가 메모리 다음:
+ *   Vercel 서버리스는 인스턴스 여러 개. 메모리/파일 저장은 인스턴스별 분리되어
+ *   /settings 에서 저장한 쿠키가 다른 인스턴스에서 안 보임. DB 가 유일한 공유처.
  *
  * 핵심 API:
  * - moveCategoryPage: wholeCategoryName(한글 경로) → queryCategoryId + 카테고리 트리
@@ -20,9 +25,18 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { eq } from 'drizzle-orm';
+
+import { db } from '@/db';
+import { systemSettings } from '@/db/schema';
+
 const BASE_URL = 'https://sellochomes.co.kr/api/v1/sellerlife';
 const DEFAULT_TIMEOUT_MS = 15_000;
 const COOKIE_FILE_PATH = join(process.cwd(), '.data', 'sellochomes-cookie.json');
+const COOKIE_DB_KEY = 'sellochomes_cookie';
+// 메모리 캐시 TTL — 너무 길면 사용자가 갱신해도 다른 인스턴스에서 옛 값 봄.
+// 30초면 갱신 후 곧바로 반영 + DB 부하 절감 사이 균형.
+const MEMORY_CACHE_TTL_MS = 30_000;
 
 // ─────────────────────────────────────────────────────────
 // 타입 — 실제 응답 구조
@@ -116,16 +130,18 @@ export class SellochomesError extends Error {
 }
 
 // ─────────────────────────────────────────────────────────
-// 쿠키 관리 (메모리 > 파일 > 환경변수)
+// 쿠키 관리 (메모리 → DB → 파일 → 환경변수)
 // ─────────────────────────────────────────────────────────
 
 declare global {
   // eslint-disable-next-line no-var
-  var __sellochomesCookie: string | undefined;
+  var __sellochomesCookieCache:
+    | { value: string; cachedAt: number }
+    | undefined;
 }
 
-/** 파일에서 저장된 쿠키를 읽는다 (없으면 null). */
-async function readSavedCookie(): Promise<string | null> {
+/** 파일에서 저장된 쿠키를 읽는다 (로컬 개발용 폴백, Vercel 에선 항상 null). */
+async function readFileCookie(): Promise<string | null> {
   try {
     const raw = await readFile(COOKIE_FILE_PATH, 'utf-8');
     const parsed = JSON.parse(raw) as { cookie?: string };
@@ -135,24 +151,54 @@ async function readSavedCookie(): Promise<string | null> {
   }
 }
 
+/** DB 에서 쿠키 조회 (Vercel 인스턴스 간 공유 영구 저장소). */
+async function readDbCookie(): Promise<string | null> {
+  try {
+    const rows = await db
+      .select({ value: systemSettings.value })
+      .from(systemSettings)
+      .where(eq(systemSettings.key, COOKIE_DB_KEY))
+      .limit(1);
+    return rows[0]?.value ?? null;
+  } catch (err) {
+    // DB 마이그레이션 안 됐거나 연결 실패 — 폴백 체인 계속
+    console.warn(
+      '[readDbCookie] DB 조회 실패 (마이그레이션 미적용 가능):',
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
+
 /**
  * 쿠키 획득 우선순위:
- * 1. globalThis 메모리 (설정 페이지에서 입력)
- * 2. 파일 (.data/sellochomes-cookie.json)
- * 3. 환경변수 (SELLOCHOMES_COOKIE)
+ * 1. globalThis 메모리 (TTL 30초 — 빠른 인스턴스 내 재사용)
+ * 2. DB system_settings (Vercel 인스턴스 간 공유)
+ * 3. 파일 (.data/sellochomes-cookie.json) — 로컬 개발 폴백
+ * 4. 환경변수 (SELLOCHOMES_COOKIE) — 최후 폴백
  */
 async function getCookieValue(): Promise<string> {
-  // 1. 메모리
-  if (globalThis.__sellochomesCookie) return globalThis.__sellochomesCookie;
-
-  // 2. 파일
-  const saved = await readSavedCookie();
-  if (saved) {
-    globalThis.__sellochomesCookie = saved;
-    return saved;
+  // 1. 메모리 (TTL 내)
+  const cache = globalThis.__sellochomesCookieCache;
+  if (cache && Date.now() - cache.cachedAt < MEMORY_CACHE_TTL_MS) {
+    return cache.value;
   }
 
-  // 3. 환경변수
+  // 2. DB
+  const fromDb = await readDbCookie();
+  if (fromDb) {
+    globalThis.__sellochomesCookieCache = { value: fromDb, cachedAt: Date.now() };
+    return fromDb;
+  }
+
+  // 3. 파일 (로컬)
+  const fromFile = await readFileCookie();
+  if (fromFile) {
+    globalThis.__sellochomesCookieCache = { value: fromFile, cachedAt: Date.now() };
+    return fromFile;
+  }
+
+  // 4. 환경변수
   const env = process.env['SELLOCHOMES_COOKIE'];
   if (env && env.trim().length > 0) return env.trim();
 
@@ -163,20 +209,37 @@ async function getCookieValue(): Promise<string> {
 }
 
 /**
- * 쿠키를 저장한다 (메모리 + 파일).
- * Vercel 서버리스는 read-only FS → 파일 쓰기 실패해도 globalThis 는 유지됨.
+ * 쿠키를 저장한다 (DB 우선 + 메모리 캐시 갱신 + 파일 best-effort).
+ * Vercel 서버리스 다중 인스턴스 환경에서도 즉시 반영되려면 DB 저장이 필수.
  */
 export async function saveSellochomesCookie(cookie: string): Promise<void> {
-  globalThis.__sellochomesCookie = cookie;
+  // 1. DB upsert (인스턴스 간 공유 — 핵심)
+  try {
+    await db
+      .insert(systemSettings)
+      .values({ key: COOKIE_DB_KEY, value: cookie })
+      .onConflictDoUpdate({
+        target: systemSettings.key,
+        set: { value: cookie, updatedAt: new Date() },
+      });
+  } catch (err) {
+    // DB 저장 실패는 치명적 — 사용자에게 에러 노출 (action 에서 throw 처리)
+    throw new SellochomesError(
+      `쿠키 DB 저장 실패: ${err instanceof Error ? err.message : String(err)}. 마이그레이션(0008_system_settings) 적용 여부 확인.`,
+      'bad_response',
+    );
+  }
+
+  // 2. 현재 인스턴스 메모리 캐시 갱신 — 즉시 반영
+  globalThis.__sellochomesCookieCache = { value: cookie, cachedAt: Date.now() };
+
+  // 3. 파일도 best-effort (로컬 개발 편의)
   try {
     const dir = join(process.cwd(), '.data');
     await mkdir(dir, { recursive: true });
     await writeFile(COOKIE_FILE_PATH, JSON.stringify({ cookie }, null, 2), 'utf-8');
-  } catch (err) {
-    console.warn(
-      '[saveSellochomesCookie] 파일 저장 실패 (메모리에는 유지됨):',
-      err instanceof Error ? err.message : err,
-    );
+  } catch {
+    // Vercel 에선 read-only FS → 실패 무시 (DB 가 source of truth)
   }
 }
 
