@@ -106,7 +106,18 @@ export async function saveSellochomesCookieAction(
     };
   }
 
-  await saveSellochomesCookie(cookie);
+  // DB 저장 시도 — 마이그레이션 미적용 시 SellochomesError throw → 사용자에게 친절한 메시지
+  try {
+    await saveSellochomesCookie(cookie);
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : '쿠키 저장에 실패했습니다 (DB 오류). 관리자에게 문의.',
+    };
+  }
 
   revalidatePath('/settings');
   revalidatePath('/research');
