@@ -49,6 +49,8 @@ export interface CreateProductInput {
   cogsCny?: number | null | undefined;
   /** 원가 신뢰도 (P-3). 가격이 있으면 자동으로 'estimated' 강제 */
   cogsCnyConfidence?: ConfidenceLevel | undefined;
+  /** 원가(원). 농수산물 또는 국내 도매 공산품 */
+  cogsKrw?: number | null | undefined;
   /** 판매가(원). 추정값 — 회계 사용 금지 */
   sellingPriceKrw?: number | null | undefined;
   /** 마진률 (0~1). 추정값 */
@@ -77,6 +79,7 @@ export interface UpdateProductInput {
   description?: string | null | undefined;
   cogsCny?: number | null | undefined;
   cogsCnyConfidence?: ConfidenceLevel | undefined;
+  cogsKrw?: number | null | undefined;
   sellingPriceKrw?: number | null | undefined;
   marginRate?: number | null | undefined;
   marginRateConfidence?: ConfidenceLevel | undefined;
@@ -165,6 +168,7 @@ export async function createProduct(input: CreateProductInput): Promise<{ id: st
     description: input.description?.trim() || null,
     status: 'research',
     cogs_cny: input.cogsCny !== null && input.cogsCny !== undefined ? String(input.cogsCny) : null,
+    cogs_krw: input.cogsKrw !== null && input.cogsKrw !== undefined ? String(input.cogsKrw) : null,
     cogs_cny_confidence: cogsCnyConfidence,
     selling_price_krw:
       input.sellingPriceKrw !== null && input.sellingPriceKrw !== undefined
@@ -224,6 +228,10 @@ export async function updateProduct(input: UpdateProductInput): Promise<void> {
     patch.cogs_cny_confidence = pickConfidence(input.cogsCny, input.cogsCnyConfidence);
   } else if (input.cogsCnyConfidence !== undefined) {
     patch.cogs_cny_confidence = input.cogsCnyConfidence;
+  }
+
+  if (input.cogsKrw !== undefined) {
+    patch.cogs_krw = input.cogsKrw !== null ? String(input.cogsKrw) : null;
   }
 
   if (input.sellingPriceKrw !== undefined) {

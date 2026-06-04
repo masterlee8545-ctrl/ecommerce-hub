@@ -27,6 +27,7 @@ import { quickAddToBasketAction } from '@/lib/products/actions';
 import { listProducts } from '@/lib/products/queries';
 
 import { BasketList } from './basket-list';
+import { ResearchSideWidgets } from './research-side-widgets';
 import { SelloBrowser } from './sello/sello-browser';
 
 export const dynamic = 'force-dynamic';
@@ -63,24 +64,26 @@ export default async function ResearchPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8">
+    <div className="mx-auto flex max-w-screen-2xl gap-6">
+      {/* 메인 콘텐츠 */}
+      <div className="min-w-0 flex-1 space-y-8">
       {/* 헤더 */}
       <header>
-        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-blue-600">
-          <Search className="h-4 w-4" aria-hidden />
+        <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-blue-600">
+          <Search className="h-5 w-5" aria-hidden />
           Step 1
         </div>
-        <h1 className="mt-2 text-2xl font-bold text-navy-900">상품 발굴</h1>
-        <p className="mt-1 text-sm text-navy-500">
+        <h1 className="mt-2 text-3xl font-bold text-navy-900">상품 발굴</h1>
+        <p className="mt-2 text-base text-navy-500">
           아이템 스카우트, 쿠팡, 1688 등에서 찾은 상품을 장바구니에 담아두세요.
           검증이 끝나면 수입 의뢰로 넘깁니다.
         </p>
       </header>
 
       {/* 빠른 추가 폼 */}
-      <section className="rounded-lg border border-blue-200 bg-blue-50/30 p-5">
-        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-navy-900">
-          <Plus className="h-4 w-4 text-blue-600" />
+      <section className="rounded-lg border border-blue-200 bg-blue-50/30 p-6">
+        <h2 className="mb-4 flex items-center gap-2 text-base font-semibold text-navy-900">
+          <Plus className="h-5 w-5 text-blue-600" />
           장바구니에 추가
         </h2>
         <form action={quickAddToBasketAction} className="space-y-3">
@@ -169,14 +172,65 @@ export default async function ResearchPage() {
         </form>
       </section>
 
+      {/* 🌊 시즌 펄스 — 작년 검색 데이터로 자동 시즌상품 추천 */}
+      <section>
+        <Link
+          href="/research/season-pulse"
+          className="group block rounded-xl border-2 border-dashed border-violet-300 bg-gradient-to-r from-violet-50 via-amber-50 to-emerald-50 p-6 transition hover:border-violet-500 hover:shadow-md"
+        >
+          <div className="flex items-start gap-5">
+            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-3xl">
+              🌊
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl font-bold text-navy-900">
+                  시즌 펄스
+                </h2>
+                <span className="rounded bg-violet-100 px-2 py-0.5 text-xs font-bold text-violet-700">
+                  AUTO
+                </span>
+                <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">
+                  NEW
+                </span>
+              </div>
+              <p className="mt-2 text-base text-navy-600">
+                작년 검색 데이터를 자동 분석해서{' '}
+                <strong className="text-violet-700">
+                  지금 소싱해야 할 시즌 키워드
+                </strong>
+                를 그룹별로 추천합니다.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2 text-sm">
+                <span className="rounded bg-white/70 px-2.5 py-1 text-amber-700">
+                  🚨 지금 소싱
+                </span>
+                <span className="rounded bg-white/70 px-2.5 py-1 text-emerald-700">
+                  📅 이번달 급상승
+                </span>
+                <span className="rounded bg-white/70 px-2.5 py-1 text-rose-700">
+                  ⏳ 다음달 피크
+                </span>
+                <span className="rounded bg-white/70 px-2.5 py-1 text-violet-700">
+                  📈 진행 중
+                </span>
+              </div>
+            </div>
+            <div className="self-center text-3xl text-violet-400 transition group-hover:translate-x-1 group-hover:text-violet-600">
+              →
+            </div>
+          </div>
+        </Link>
+      </section>
+
       {/* 🆕 셀록홈즈 카테고리 소싱 — 네이버 검색량 + 쿠팡 리뷰 + 경쟁률 통합 */}
       <section>
-        <div className="mb-3 flex items-center gap-2">
-          <Sparkles className="h-5 w-5 text-violet-600" />
-          <h2 className="text-base font-bold text-navy-900">
+        <div className="mb-4 flex items-center gap-2">
+          <Sparkles className="h-6 w-6 text-violet-600" />
+          <h2 className="text-xl font-bold text-navy-900">
             셀록홈즈 카테고리 소싱
           </h2>
-          <span className="rounded bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">
+          <span className="rounded bg-violet-100 px-2 py-0.5 text-xs font-bold text-violet-700">
             BETA
           </span>
         </div>
@@ -188,9 +242,9 @@ export default async function ResearchPage() {
 
       {/* 장바구니 목록 */}
       <section data-basket-anchor>
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-navy-500">
+            <h2 className="text-base font-semibold uppercase tracking-wide text-navy-500">
               장바구니 ({basketItems.length}개)
             </h2>
             {activeCompany && (
@@ -239,51 +293,57 @@ export default async function ResearchPage() {
 
       {/* 검증 도구 */}
       <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-navy-500">
+        <h2 className="mb-4 text-base font-semibold uppercase tracking-wide text-navy-500">
           검증 도구
         </h2>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <Link
             href="/research/coupang-first-page"
-            className="flex items-center gap-3 rounded-lg border border-navy-200 bg-white p-4 transition hover:border-teal-300 hover:shadow-sm"
+            className="flex items-center gap-4 rounded-lg border border-navy-200 bg-white p-5 transition hover:border-teal-300 hover:shadow-sm"
           >
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50">
-              <BarChart3 className="h-5 w-5 text-blue-700" />
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-blue-50">
+              <BarChart3 className="h-6 w-6 text-blue-700" />
             </div>
             <div>
-              <div className="text-sm font-semibold text-navy-900">1페이지 메트릭</div>
-              <div className="text-xs text-navy-500">
+              <div className="text-base font-semibold text-navy-900">1페이지 메트릭</div>
+              <div className="text-sm text-navy-500">
                 상위 20개 리뷰수·로켓비율 조회
               </div>
             </div>
           </Link>
           <Link
             href="/research/coupang-reviews"
-            className="flex items-center gap-3 rounded-lg border border-navy-200 bg-white p-4 transition hover:border-teal-300 hover:shadow-sm"
+            className="flex items-center gap-4 rounded-lg border border-navy-200 bg-white p-5 transition hover:border-teal-300 hover:shadow-sm"
           >
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-teal-50">
-              <FileSearch className="h-5 w-5 text-teal-700" />
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-teal-50">
+              <FileSearch className="h-6 w-6 text-teal-700" />
             </div>
             <div>
-              <div className="text-sm font-semibold text-navy-900">쿠팡 리뷰 분석</div>
-              <div className="text-xs text-navy-500">
+              <div className="text-base font-semibold text-navy-900">쿠팡 리뷰 분석</div>
+              <div className="text-sm text-navy-500">
                 리뷰 텍스트 AI 감성 분석
               </div>
             </div>
           </Link>
-          <div className="flex items-center gap-3 rounded-lg border border-dashed border-navy-200 bg-navy-50/20 p-4">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-navy-100">
-              <Sparkles className="h-5 w-5 text-navy-400" />
+          <div className="flex items-center gap-4 rounded-lg border border-dashed border-navy-200 bg-navy-50/20 p-5">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-navy-100">
+              <Sparkles className="h-6 w-6 text-navy-400" />
             </div>
             <div>
-              <div className="text-sm font-semibold text-navy-500">디자인 특허 확인</div>
-              <div className="text-xs text-navy-400">
+              <div className="text-base font-semibold text-navy-500">디자인 특허 확인</div>
+              <div className="text-sm text-navy-400">
                 키프리스 조회 (준비중)
               </div>
             </div>
           </div>
         </div>
       </section>
+      </div>
+
+      {/* 우측 사이드 위젯 영역 (sticky) */}
+      <aside className="sticky top-6 hidden h-fit w-80 shrink-0 space-y-4 self-start xl:block">
+        <ResearchSideWidgets />
+      </aside>
     </div>
   );
 }

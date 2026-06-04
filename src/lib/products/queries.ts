@@ -44,6 +44,11 @@ export interface ListProductsParams {
    * Phase C — operator 역할 필터링용.
    */
   assigneeUserId?: string;
+  /**
+   * 공급망 유형 필터.
+   * 'domestic_vendor' = 농수산물, 'overseas_supplier' = 공산품
+   */
+  supplyType?: 'domestic_vendor' | 'overseas_supplier';
 }
 
 // ─────────────────────────────────────────────────────────
@@ -85,6 +90,9 @@ export async function listProducts(params: ListProductsParams): Promise<Product[
     const conditions = [eq(products.company_id, params.companyId)];
     if (params.stages && params.stages.length > 0) {
       conditions.push(inArray(products.status, params.stages));
+    }
+    if (params.supplyType) {
+      conditions.push(eq(products.supply_type, params.supplyType));
     }
     if (params.assigneeUserId) {
       const assigneeCond = or(

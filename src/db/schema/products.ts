@@ -16,6 +16,9 @@
 import {
   decimal,
   index,
+  integer,
+  jsonb,
+  numeric,
   pgTable,
   text,
   timestamp,
@@ -27,6 +30,7 @@ import { companies } from './companies';
 import { keywords } from './keywords';
 import { suppliers } from './suppliers';
 import { users } from './users';
+import { vendors } from './vendors';
 
 export const products = pgTable(
   'products',
@@ -62,6 +66,58 @@ export const products = pgTable(
      * 수입업체에 인계 시 참조 — 외부 공급자가 동일 상품을 찾아 견적 낼 때 사용.
      */
     cn_source_url: text('cn_source_url'),
+
+    // ─── 공급망 분기 (ADR-012 D-2) ───
+    /**
+     * 'domestic_vendor' | 'overseas_supplier' | 'both' | NULL.
+     * NULL = 사용자가 아직 결정 안 함 (탭 둘 다 노출).
+     * 5번 PR 에서 시즌 펄스 담기 시 자동 추론.
+     */
+    supply_type: text('supply_type'),
+    /**
+     * 국내 농가 공급처 (확정된 경우).
+     * primary_supplier_id 와 별개 (의미 충돌 회피, ADR-012 D-1).
+     */
+    primary_vendor_id: uuid('primary_vendor_id').references(() => vendors.id),
+
+    // ─── 시즌 메타 (시즌 펄스 → 담기 시 자동 채움, ADR-012 D-5) ───
+    /** 1~12, 피크 검색 월 */
+    season_peak_month: integer('season_peak_month'),
+    /** 1~12, 소싱 준비 시작 월 (보통 피크 -2 개월) */
+    season_prep_month: integer('season_prep_month'),
+    /** 피크 / 바닥 6개월 평균 (예: 12.50배) */
+    seasonality_ratio: numeric('seasonality_ratio', { precision: 5, scale: 2 }),
+    /** 시즌 펄스 5점 스코어링 (5/4/2/1) */
+    season_score: integer('season_score'),
+
+    // ─── 시장 가격 (쿠팡 + 네이버 1~10등 가격대) ───
+    /** 쿠팡 1페이지 최저가 */
+    coupang_price_min: numeric('coupang_price_min', { precision: 12, scale: 0 }),
+    /** 쿠팡 1페이지 중간값 */
+    coupang_price_median: numeric('coupang_price_median', { precision: 12, scale: 0 }),
+    /** 쿠팡 1페이지 최고가 */
+    coupang_price_max: numeric('coupang_price_max', { precision: 12, scale: 0 }),
+    /** 쿠팡 가격 표본 수 */
+    coupang_price_sample_size: integer('coupang_price_sample_size'),
+    /** 네이버 쇼핑 상위 최저가 */
+    naver_price_min: numeric('naver_price_min', { precision: 12, scale: 0 }),
+    naver_price_median: numeric('naver_price_median', { precision: 12, scale: 0 }),
+    naver_price_max: numeric('naver_price_max', { precision: 12, scale: 0 }),
+    naver_price_sample_size: integer('naver_price_sample_size'),
+    /** 시장 가격 마지막 업데이트 */
+    market_prices_updated_at: timestamp('market_prices_updated_at', { withTimezone: true }),
+    /** 쿠팡 1~20등 상품명+가격+URL (jsonb 배열) — 형 요청: 농산물 중량/개수 다양 */
+    coupang_top_listings: jsonb('coupang_top_listings'),
+    /** 네이버 쇼핑 1~10등 상품명+가격+URL+몰명 (jsonb 배열) */
+    naver_top_listings: jsonb('naver_top_listings'),
+    /** 쿠팡 1페이지 평균 리뷰수 — 참고용 (1만+ 1위가 평균 끌어올림) */
+    coupang_avg_review_count: integer('coupang_avg_review_count'),
+    /** 쿠팡 1페이지 최대 리뷰수 */
+    coupang_max_review_count: integer('coupang_max_review_count'),
+    /** 추정 월간 검색량 (정확도 ↓, 셀록홈즈 키워드 페이지 별도 호출 필요) */
+    monthly_search_volume: integer('monthly_search_volume'),
+    /** ⭐ 형 핵심 메트릭: 1페이지 20개 중 리뷰 300 이하 상품 수 (진입 자리) */
+    coupang_low_review_count: integer('coupang_low_review_count'),
 
     // 담당자 (3종 — 워크플로우 책임 분리)
     owner_user_id: uuid('owner_user_id').references(() => users.id),

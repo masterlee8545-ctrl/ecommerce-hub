@@ -114,3 +114,7 @@ data/sello-scrape/
 .sello-setup-done
 
 .vercel
+
+# Playwright 임시 user-data (잘못된 cwd 로 생성될 수 있음)
+UserspcAppDataLocalGoogleChromeUser*/
+sello-user-data/

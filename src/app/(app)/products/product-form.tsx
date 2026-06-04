@@ -31,7 +31,7 @@
  */
 'use client';
 
-import { useActionState } from 'react';
+import { useActionState, useState } from 'react';
 
 import { AlertCircle, Loader2, Save } from 'lucide-react';
 
@@ -59,9 +59,11 @@ export interface ProductFormDefaults {
   description?: string | null;
   cogs_cny?: string | null; //                       drizzle decimal은 string
   cogs_cny_confidence?: string | null;
+  cogs_krw?: string | null; //                       한국 원가 (농수산물용)
   selling_price_krw?: string | null;
   margin_rate?: string | null;
   margin_rate_confidence?: string | null;
+  supply_type?: string | null;
 }
 
 interface ProductFormProps {
@@ -74,6 +76,8 @@ interface ProductFormProps {
   /** 신규 등록 모드에서만 사용: 자동 추천 코드 */
   suggestedCode?: string;
 }
+
+const DEFAULT_EXCHANGE_RATE = 195; // 1¥ ≈ 195원 (기본값)
 
 // ─────────────────────────────────────────────────────────
 // 폼
@@ -90,6 +94,42 @@ export function ProductForm({ action, mode, defaultValues, suggestedCode }: Prod
     defaultValues?.margin_rate != null
       ? (Number(defaultValues.margin_rate) * PERCENT_MULTIPLIER).toFixed(MARGIN_DECIMALS)
       : '';
+
+  // 공급망 유형 — 농수산물은 원만, 공산품은 위안/원 둘 다
+  const isDomestic = defaultValues?.supply_type === 'domestic_vendor';
+
+  // 통화 토글 — 공산품에서 형이 위안 입력할지 원 입력할지
+  const initialCurrency: 'cny' | 'krw' =
+    isDomestic || defaultValues?.cogs_krw ? 'krw' : 'cny';
+  const [currency, setCurrency] = useState<'cny' | 'krw'>(initialCurrency);
+  const [exchangeRate, setExchangeRate] = useState<number>(DEFAULT_EXCHANGE_RATE);
+  const [cogsCny, setCogsCny] = useState<string>(defaultValues?.cogs_cny ?? '');
+  const [cogsKrw, setCogsKrw] = useState<string>(defaultValues?.cogs_krw ?? '');
+
+  // 위안 ↔ 원 자동 계산
+  function handleCnyChange(v: string) {
+    setCogsCny(v);
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) {
+      setCogsKrw(Math.round(n * exchangeRate).toString());
+    } else if (v === '') {
+      setCogsKrw('');
+    }
+  }
+  function handleKrwChange(v: string) {
+    setCogsKrw(v);
+    if (currency === 'krw') {
+      // 원 입력 모드에서는 위안 비워둠 (공산품인데 한국 도매면 위안 X)
+      setCogsCny('');
+    } else {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) {
+        setCogsCny((n / exchangeRate).toFixed(2));
+      } else if (v === '') {
+        setCogsCny('');
+      }
+    }
+  }
 
   return (
     <form action={formAction} className="space-y-5">
@@ -163,27 +203,113 @@ export function ProductForm({ action, mode, defaultValues, suggestedCode }: Prod
           <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
           <div>
             <span className="font-semibold">가격 정보는 모두 추정값입니다 (P-3).</span> 회계
-            처리에 직접 사용 금지. 신뢰도를 명시하지 않으면 자동으로 &quot;추정&quot;이 적용됩니다.
+            처리에 직접 사용 금지.
           </div>
         </div>
 
-        {/* 원가 (위안) */}
+        {/* 통화 토글 (공산품만) — 농수산물은 원 고정 */}
+        {!isDomestic && (
+          <div className="mb-3 flex items-center gap-3">
+            <span className="text-xs font-semibold text-navy-700">원가 통화:</span>
+            <div className="flex rounded-md border border-navy-300 overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setCurrency('cny')}
+                className={`px-3 py-1.5 text-xs font-semibold transition ${
+                  currency === 'cny'
+                    ? 'bg-orange-100 text-orange-700'
+                    : 'bg-white text-navy-500 hover:bg-navy-50'
+                }`}
+              >
+                ¥ 위안 (1688 직수입)
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrency('krw')}
+                className={`px-3 py-1.5 text-xs font-semibold transition ${
+                  currency === 'krw'
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'bg-white text-navy-500 hover:bg-navy-50'
+                }`}
+              >
+                ₩ 원 (국내 도매)
+              </button>
+            </div>
+            {currency === 'cny' && (
+              <div className="flex items-center gap-1 text-xs text-navy-600">
+                환율:
+                <input
+                  type="number"
+                  step="1"
+                  value={exchangeRate}
+                  onChange={(e) => setExchangeRate(Number(e.target.value) || DEFAULT_EXCHANGE_RATE)}
+                  className="w-16 rounded border border-navy-300 px-1.5 py-0.5 text-xs"
+                />
+                원/¥
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 원가 입력 — 농수산물(원만) / 공산품 위안 / 공산품 원 */}
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <Field
-            label="원가 (위안 ¥)"
-            hint="공급사 견적 또는 1688 페이지의 단가"
-            error={state.fieldErrors?.cogsCny}
-          >
-            <input
-              name="cogsCny"
-              type="number"
-              step="0.01"
-              min="0"
-              defaultValue={defaultValues?.cogs_cny ?? ''}
-              className="w-full rounded-md border border-navy-200 bg-white px-3 py-2 text-sm focus:border-teal-400 focus:outline-none focus:ring-1 focus:ring-teal-400"
-            />
-          </Field>
-          <Field label="원가 신뢰도" hint="원가 출처의 확실성">
+          {isDomestic ? (
+            // 농수산물 = 원만 입력
+            <Field
+              label="원가 (원 ₩)"
+              hint="농가 공급가 (kg/박스 단위로 환산)"
+              error={state.fieldErrors?.cogsCny}
+            >
+              <input
+                name="cogsKrw"
+                type="number"
+                step="1"
+                min="0"
+                value={cogsKrw}
+                onChange={(e) => setCogsKrw(e.target.value)}
+                className="w-full rounded-md border border-navy-200 bg-white px-3 py-2 text-sm focus:border-teal-400 focus:outline-none focus:ring-1 focus:ring-teal-400"
+              />
+              {/* 위안 필드 비워서 보냄 */}
+              <input type="hidden" name="cogsCny" value="" />
+            </Field>
+          ) : currency === 'cny' ? (
+            // 공산품 위안 모드 — 위안 입력 + 원 자동 계산 표시
+            <Field
+              label="원가 (위안 ¥)"
+              hint={`1688 / 타오바오 가격. 원 자동 계산: ¥${cogsCny || '0'} × ${exchangeRate}원 = ₩${cogsKrw || '0'}`}
+              error={state.fieldErrors?.cogsCny}
+            >
+              <input
+                name="cogsCny"
+                type="number"
+                step="0.01"
+                min="0"
+                value={cogsCny}
+                onChange={(e) => handleCnyChange(e.target.value)}
+                className="w-full rounded-md border border-navy-200 bg-white px-3 py-2 text-sm focus:border-teal-400 focus:outline-none focus:ring-1 focus:ring-teal-400"
+              />
+              <input type="hidden" name="cogsKrw" value={cogsKrw} />
+            </Field>
+          ) : (
+            // 공산품 원 모드 — 한국 도매에서 받음, 위안 X
+            <Field
+              label="원가 (원 ₩)"
+              hint="국내 도매상에서 받는 원가"
+              error={state.fieldErrors?.cogsCny}
+            >
+              <input
+                name="cogsKrw"
+                type="number"
+                step="1"
+                min="0"
+                value={cogsKrw}
+                onChange={(e) => handleKrwChange(e.target.value)}
+                className="w-full rounded-md border border-navy-200 bg-white px-3 py-2 text-sm focus:border-teal-400 focus:outline-none focus:ring-1 focus:ring-teal-400"
+              />
+              <input type="hidden" name="cogsCny" value="" />
+            </Field>
+          )}
+          <Field label="원가 신뢰도" hint="공급가 확정 여부">
             <ConfidenceSelect
               name="cogsCnyConfidence"
               defaultValue={defaultValues?.cogs_cny_confidence ?? ''}

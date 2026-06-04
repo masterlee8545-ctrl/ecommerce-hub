@@ -22,8 +22,11 @@
  */
 import Link from 'next/link';
 
+import { sql } from 'drizzle-orm';
 import { ArrowRight, Package, Plus, Tag, User } from 'lucide-react';
 
+import { withCompanyContext } from '@/db';
+import { products } from '@/db/schema';
 import { requireCompanyContext } from '@/lib/auth/session';
 import {
   CONFIDENCE_META,
@@ -50,17 +53,30 @@ const CNY_DECIMALS = 2;
 // ─────────────────────────────────────────────────────────
 
 interface PageProps {
-  searchParams: Promise<{ stage?: string }>;
+  searchParams: Promise<{ stage?: string; supply?: string }>;
+}
+
+type SupplyFilter = 'domestic_vendor' | 'overseas_supplier' | undefined;
+
+function parseSupplyFilter(v: string | undefined): SupplyFilter {
+  if (v === 'domestic_vendor' || v === 'overseas_supplier') return v;
+  return undefined;
 }
 
 export default async function ProductsPage({ searchParams }: PageProps) {
   const ctx = await requireCompanyContext();
   const sp = await searchParams;
   const stages = parsePipelineStageFilter(sp.stage);
+  const supplyFilter = parseSupplyFilter(sp.supply);
 
   // DB 조회 — 실패 시 빈 배열로 폴백
   let rows: Awaited<ReturnType<typeof listProducts>> = [];
   let counts: Record<PipelineStage, number> | null = null;
+  const supplyCounts: { domestic: number; overseas: number; none: number } = {
+    domestic: 0,
+    overseas: 0,
+    none: 0,
+  };
   let dbError: string | null = null;
   try {
     const listArgs: Parameters<typeof listProducts>[0] = {
@@ -68,6 +84,7 @@ export default async function ProductsPage({ searchParams }: PageProps) {
       stages,
       limit: PRODUCTS_LIMIT,
     };
+    if (supplyFilter) listArgs.supplyType = supplyFilter;
     // operator 는 자기에게 배정된 상품만 표시
     if (ctx.role === 'operator') {
       listArgs.assigneeUserId = ctx.userId;
@@ -76,6 +93,22 @@ export default async function ProductsPage({ searchParams }: PageProps) {
       listProducts(listArgs),
       countProductsByStage(ctx.companyId),
     ]);
+    // supply_type 별 카운트
+    const supplyCountRows = await withCompanyContext(ctx.companyId, async (tx) =>
+      tx
+        .select({
+          supply_type: products.supply_type,
+          n: sql<number>`count(*)::int`,
+        })
+        .from(products)
+        .where(sql`${products.company_id} = ${ctx.companyId}`)
+        .groupBy(products.supply_type),
+    );
+    for (const r of supplyCountRows) {
+      if (r.supply_type === 'domestic_vendor') supplyCounts.domestic = r.n;
+      else if (r.supply_type === 'overseas_supplier') supplyCounts.overseas = r.n;
+      else supplyCounts.none += r.n;
+    }
   } catch (err) {
     console.error('[products] 조회 실패:', err);
     dbError =
@@ -114,9 +147,22 @@ export default async function ProductsPage({ searchParams }: PageProps) {
         </div>
       </header>
 
+      {/* 카테고리 탭 (공산품 / 농수산물) */}
+      <SupplyTabs
+        activeSupply={supplyFilter}
+        supplyCounts={supplyCounts}
+        totalCount={totalCount}
+        currentStage={stages[0]}
+      />
+
       {/* 단계 필터 칩 */}
       {counts && (
-        <StageFilterChips activeStages={stages} counts={counts} totalCount={totalCount} />
+        <StageFilterChips
+          activeStages={stages}
+          counts={counts}
+          totalCount={totalCount}
+          currentSupply={supplyFilter}
+        />
       )}
 
       {/* 본문 */}
@@ -152,19 +198,90 @@ export default async function ProductsPage({ searchParams }: PageProps) {
 // 단계 필터 칩
 // ─────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────
+// 카테고리 탭 (공산품 / 농수산물)
+// ─────────────────────────────────────────────────────────
+
+interface SupplyTabsProps {
+  activeSupply: SupplyFilter;
+  supplyCounts: { domestic: number; overseas: number; none: number };
+  totalCount: number;
+  currentStage: PipelineStage | undefined;
+}
+
+function buildHref(stage: PipelineStage | undefined, supply: SupplyFilter): string {
+  const params = new URLSearchParams();
+  if (stage) params.set('stage', stage);
+  if (supply) params.set('supply', supply);
+  const qs = params.toString();
+  return qs ? `/products?${qs}` : '/products';
+}
+
+function SupplyTabs({ activeSupply, supplyCounts, totalCount, currentStage }: SupplyTabsProps) {
+  return (
+    <nav className="flex flex-wrap items-center gap-2 border-b border-navy-200 pb-2" aria-label="카테고리">
+      <Link
+        href={buildHref(currentStage, undefined)}
+        className={`inline-flex items-center gap-1.5 rounded-t-md border-b-2 px-4 py-2 text-sm font-semibold transition ${
+          !activeSupply
+            ? 'border-teal-600 text-teal-700'
+            : 'border-transparent text-navy-500 hover:text-teal-700'
+        }`}
+      >
+        🗂 전체
+        <span className="rounded-full bg-navy-100 px-1.5 py-0.5 text-[10px] font-mono text-navy-700">
+          {totalCount}
+        </span>
+      </Link>
+      <Link
+        href={buildHref(currentStage, 'overseas_supplier')}
+        className={`inline-flex items-center gap-1.5 rounded-t-md border-b-2 px-4 py-2 text-sm font-semibold transition ${
+          activeSupply === 'overseas_supplier'
+            ? 'border-blue-600 text-blue-700'
+            : 'border-transparent text-navy-500 hover:text-blue-700'
+        }`}
+      >
+        🏭 공산품
+        <span className="rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-mono text-blue-700">
+          {supplyCounts.overseas}
+        </span>
+      </Link>
+      <Link
+        href={buildHref(currentStage, 'domestic_vendor')}
+        className={`inline-flex items-center gap-1.5 rounded-t-md border-b-2 px-4 py-2 text-sm font-semibold transition ${
+          activeSupply === 'domestic_vendor'
+            ? 'border-emerald-600 text-emerald-700'
+            : 'border-transparent text-navy-500 hover:text-emerald-700'
+        }`}
+      >
+        🌾 농수산물
+        <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-mono text-emerald-700">
+          {supplyCounts.domestic}
+        </span>
+      </Link>
+      {supplyCounts.none > 0 && (
+        <span className="ml-2 text-xs text-navy-400">
+          미분류 {supplyCounts.none}개
+        </span>
+      )}
+    </nav>
+  );
+}
+
 interface StageFilterChipsProps {
   activeStages: PipelineStage[];
   counts: Record<PipelineStage, number>;
   totalCount: number;
+  currentSupply: SupplyFilter;
 }
 
-function StageFilterChips({ activeStages, counts, totalCount }: StageFilterChipsProps) {
+function StageFilterChips({ activeStages, counts, totalCount, currentSupply }: StageFilterChipsProps) {
   const isAll = activeStages.length === 0;
 
   return (
     <nav className="flex flex-wrap items-center gap-1.5" aria-label="단계 필터">
       <Link
-        href="/products"
+        href={buildHref(undefined, currentSupply)}
         className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition ${
           isAll
             ? 'border-teal-300 bg-teal-50 text-teal-700'
@@ -183,7 +300,7 @@ function StageFilterChips({ activeStages, counts, totalCount }: StageFilterChips
         return (
           <Link
             key={stage}
-            href={`/products?stage=${stage}`}
+            href={buildHref(stage, currentSupply)}
             className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition ${
               isActive
                 ? `border-teal-300 ${meta.bgColor} ${meta.color}`
@@ -215,8 +332,12 @@ function ProductCard({ product }: ProductCardProps) {
     : null;
 
   const cogsCny = product.cogs_cny !== null ? Number(product.cogs_cny) : null;
+  const cogsKrw = product.cogs_krw !== null ? Number(product.cogs_krw) : null;
   const sellingKrw = product.selling_price_krw !== null ? Number(product.selling_price_krw) : null;
   const margin = product.margin_rate !== null ? Number(product.margin_rate) : null;
+
+  // 농수산물 (domestic_vendor) 은 위안 안 씀 — 한국 원가만 표시
+  const isDomestic = product.supply_type === 'domestic_vendor';
 
   return (
     <li>
@@ -252,24 +373,38 @@ function ProductCard({ product }: ProductCardProps) {
           </div>
         )}
 
-        {/* 가격 정보 */}
+        {/* 가격 정보 — 농수산물(domestic_vendor) 은 ₩ 만 / 공산품은 ¥ + ₩ */}
         <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
-          <PriceCell
-            label="원가(¥)"
-            value={cogsCny !== null ? cogsCny.toFixed(CNY_DECIMALS) : '—'}
-            confidence={product.cogs_cny_confidence as ConfidenceLevel | null}
-          />
+          {isDomestic ? (
+            <PriceCell
+              label="원가(₩)"
+              value={cogsKrw !== null ? cogsKrw.toLocaleString('ko-KR', { maximumFractionDigits: KRW_DECIMALS }) : '미입력'}
+              confidence={product.cogs_cny_confidence as ConfidenceLevel | null}
+            />
+          ) : (
+            <PriceCell
+              label="원가(¥)"
+              value={cogsCny !== null ? cogsCny.toFixed(CNY_DECIMALS) : '미입력'}
+              confidence={product.cogs_cny_confidence as ConfidenceLevel | null}
+            />
+          )}
           <PriceCell
             label="판매가(₩)"
-            value={sellingKrw !== null ? sellingKrw.toLocaleString('ko-KR', { maximumFractionDigits: KRW_DECIMALS }) : '—'}
+            value={sellingKrw !== null ? sellingKrw.toLocaleString('ko-KR', { maximumFractionDigits: KRW_DECIMALS }) : '미입력'}
             confidence={null}
           />
           <PriceCell
             label="마진"
-            value={margin !== null ? `${(margin * PERCENT_MULTIPLIER).toFixed(1)}%` : '—'}
+            value={margin !== null ? `${(margin * PERCENT_MULTIPLIER).toFixed(1)}%` : '미입력'}
             confidence={product.margin_rate_confidence as ConfidenceLevel | null}
           />
         </div>
+
+        {/* 시장 메트릭 (검색량 / 피크월 / 평균 리뷰) */}
+        <MarketMetricsRow product={product} />
+
+        {/* 시장 가격 (쿠팡 + 네이버 1~10등 가격대) */}
+        <MarketPriceRow product={product} />
 
         {/* 하단: 등록일 + 화살표 */}
         <div className="mt-3 flex items-center justify-between border-t border-navy-100 pt-2">
@@ -284,6 +419,203 @@ function ProductCard({ product }: ProductCardProps) {
         </div>
       </Link>
     </li>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+// 시장 가격 행 (쿠팡 + 네이버 1~10등)
+// ─────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────
+// 시장 메트릭 행 — 월간 검색량 + 피크월 + 평균 리뷰
+// ─────────────────────────────────────────────────────────
+
+const MONTH_NAMES_KO = ['', '1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'];
+
+interface MarketMetricsRowProps {
+  product: Awaited<ReturnType<typeof listProducts>>[number];
+}
+
+function MarketMetricsRow({ product }: MarketMetricsRowProps) {
+  const peakMonth = product.season_peak_month;
+  const prepMonth = product.season_prep_month;
+  const seasonRatio = product.seasonality_ratio !== null ? Number(product.seasonality_ratio) : null;
+  const lowReviewN = product.coupang_low_review_count;
+  const sampleSize = product.coupang_price_sample_size ?? 0;
+  const maxReview = product.coupang_max_review_count;
+
+  // 형 핵심 기준: 리뷰 300 이하 진입 자리
+  // 12+/20 = 블루오션, 6+/20 = 진입 가능, 2+/20 = 경쟁, 0~1 = 포화
+  const entryGrade =
+    lowReviewN === null || sampleSize === 0
+      ? null
+      : lowReviewN >= 12
+        ? { label: 'S', text: '블루오션', color: 'bg-emerald-100 text-emerald-700' }
+        : lowReviewN >= 6
+          ? { label: 'A', text: '진입 가능', color: 'bg-blue-100 text-blue-700' }
+          : lowReviewN >= 2
+            ? { label: 'B', text: '경쟁 심함', color: 'bg-amber-100 text-amber-700' }
+            : { label: 'C', text: '포화', color: 'bg-red-100 text-red-700' };
+
+  const hasAny = peakMonth !== null || lowReviewN !== null;
+
+  return (
+    <div className="mt-3 grid grid-cols-2 gap-2 rounded border border-navy-100 bg-blue-50/30 p-2 text-[10px]">
+      {/* 피크월 + 시즌성 */}
+      <div>
+        <div className="text-[9px] font-semibold uppercase text-navy-500">피크월</div>
+        {peakMonth ? (
+          <div className="mt-0.5">
+            <span className="font-mono text-sm font-bold text-emerald-700">
+              {MONTH_NAMES_KO[peakMonth]}
+            </span>
+            {seasonRatio !== null && seasonRatio > 0 && (
+              <span className="ml-1 text-[9px] text-emerald-600">×{seasonRatio.toFixed(1)}</span>
+            )}
+            {prepMonth && (
+              <div className="text-[9px] text-navy-500">준비 {MONTH_NAMES_KO[prepMonth]}</div>
+            )}
+          </div>
+        ) : (
+          <div className="mt-0.5 text-navy-400">상시</div>
+        )}
+      </div>
+
+      {/* 쿠팡 진입 자리 — 형 핵심 기준 */}
+      <div>
+        <div className="text-[9px] font-semibold uppercase text-navy-500">
+          쿠팡 진입 자리 <span className="text-navy-400">(리뷰 300 이하)</span>
+        </div>
+        {lowReviewN !== null && sampleSize > 0 ? (
+          <div className="mt-0.5">
+            <div className="flex items-baseline gap-1">
+              <span className="font-mono text-sm font-bold text-navy-900">
+                {lowReviewN}/{sampleSize}
+              </span>
+              {entryGrade && (
+                <span className={`rounded px-1 py-0 text-[8px] font-bold ${entryGrade.color}`}>
+                  {entryGrade.label} {entryGrade.text}
+                </span>
+              )}
+            </div>
+            {maxReview !== null && (
+              <div className="text-[9px] text-navy-400">
+                최대 리뷰 {maxReview.toLocaleString('ko-KR')}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="mt-0.5 text-navy-400">—</div>
+        )}
+      </div>
+
+      {!hasAny && (
+        <div className="col-span-2 text-center text-[9px] text-navy-400">
+          📊 쿠팡 워커 실행 후 자동 채워짐
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface MarketPriceRowProps {
+  product: Awaited<ReturnType<typeof listProducts>>[number];
+}
+
+interface NaverListing {
+  rank: number;
+  title: string;
+  price: number;
+  mall: string | null;
+  link: string;
+}
+
+interface CoupangListing {
+  rank: number;
+  title: string;
+  price: number | null;
+  isRocket: boolean;
+  reviewCount: number;
+  url: string | null;
+}
+
+function MarketPriceRow({ product }: MarketPriceRowProps) {
+  const cgN = product.coupang_price_sample_size ?? 0;
+  const nvN = product.naver_price_sample_size ?? 0;
+
+  const cgListings = (product.coupang_top_listings ?? null) as CoupangListing[] | null;
+  const nvListings = (product.naver_top_listings ?? null) as NaverListing[] | null;
+
+  const hasAny = (cgListings && cgListings.length > 0) || (nvListings && nvListings.length > 0);
+
+  return (
+    <div className="mt-2 rounded border border-navy-100 bg-navy-50/30 p-2 text-[10px]">
+      <div className="mb-1.5 flex items-baseline justify-between">
+        <span className="text-[9px] font-semibold uppercase text-navy-500">
+          시장 1~10등 가격
+        </span>
+        {product.market_prices_updated_at && (
+          <span className="text-[8px] text-navy-300">
+            {formatDate(product.market_prices_updated_at)}
+          </span>
+        )}
+      </div>
+      {!hasAny ? (
+        <div className="text-navy-400">📊 데이터 없음</div>
+      ) : (
+        <div className="space-y-2">
+          {/* 네이버 1~10등 */}
+          {nvListings && nvListings.length > 0 && (
+            <div>
+              <div className="mb-0.5 flex items-center gap-1 text-navy-600">
+                <span className="font-semibold">🟢 네이버</span>
+                <span className="text-[9px] text-navy-400">({nvN}개)</span>
+              </div>
+              <ol className="space-y-0.5 font-mono">
+                {nvListings.slice(0, 10).map((l) => (
+                  <li key={l.rank} className="flex items-baseline gap-1">
+                    <span className="w-4 shrink-0 text-[9px] text-navy-400">{l.rank}.</span>
+                    <span className="flex-1 truncate text-[10px] text-navy-700" title={l.title}>
+                      {l.title}
+                    </span>
+                    <span className="shrink-0 text-[10px] font-semibold text-navy-900">
+                      {l.price.toLocaleString('ko-KR')}원
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          {/* 쿠팡 1~20등 (있을 때만) */}
+          {cgListings && cgListings.length > 0 && (
+            <div className="border-t border-navy-100 pt-1.5">
+              <div className="mb-0.5 flex items-center gap-1 text-navy-600">
+                <span className="font-semibold">🚀 쿠팡</span>
+                <span className="text-[9px] text-navy-400">({cgN}개)</span>
+              </div>
+              <ol className="space-y-0.5 font-mono">
+                {cgListings.slice(0, 10).map((l) => (
+                  <li key={l.rank} className="flex items-baseline gap-1">
+                    <span className="w-4 shrink-0 text-[9px] text-navy-400">{l.rank}.</span>
+                    <span className="flex-1 truncate text-[10px] text-navy-700" title={l.title}>
+                      {l.isRocket && <span className="mr-0.5">🚀</span>}
+                      {l.title}
+                    </span>
+                    <span className="shrink-0 text-[9px] text-navy-500">
+                      리뷰 {l.reviewCount.toLocaleString('ko-KR')}
+                    </span>
+                    <span className="shrink-0 text-[10px] font-semibold text-navy-900">
+                      {l.price !== null ? `${l.price.toLocaleString('ko-KR')}원` : '-'}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

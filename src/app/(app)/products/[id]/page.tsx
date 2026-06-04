@@ -182,17 +182,52 @@ export default async function ProductDetailPage({ params }: PageProps) {
           )}
         </div>
 
-        {/* 가격 정보 카드 */}
+        {/* 공급처 찾기 진입 (ADR-012 D-2 — supply_type 따라 조건부 노출) */}
+        {(product.supply_type === 'domestic_vendor' ||
+          product.supply_type === 'both' ||
+          product.supply_type == null) && (
+          <Link
+            href={`/products/${product.id}/find-vendor`}
+            className="mt-4 flex items-center gap-3 rounded-lg border border-emerald-200 bg-gradient-to-r from-emerald-50 to-blue-50 p-3 hover:from-emerald-100 hover:to-blue-100"
+          >
+            <Sparkles className="h-5 w-5 text-emerald-600" />
+            <div className="flex-1">
+              <div className="text-sm font-semibold text-navy-900">
+                🌾 공급처 찾기 — 농가 자동 매칭
+              </div>
+              <div className="text-xs text-navy-500">
+                {product.season_peak_month != null
+                  ? `피크 ${product.season_peak_month}월 / 시즌성 ${product.seasonality_ratio ? Number(product.seasonality_ratio).toFixed(1) + '배' : '미입력'} 반영`
+                  : '상품명에서 농산물 키워드 자동 추출 → 점수순 매칭'}
+              </div>
+            </div>
+            <ArrowRight className="h-4 w-4 text-emerald-600" />
+          </Link>
+        )}
+
+        {/* 가격 정보 카드 — 농수산물(domestic_vendor)이면 원가(₩) 만, 공산품이면 원가(¥) */}
         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <PriceTile
-            label="원가 (위안)"
-            value={
-              product.cogs_cny !== null
-                ? `¥ ${Number(product.cogs_cny).toFixed(CNY_DECIMALS)}`
-                : '미입력'
-            }
-            confidence={product.cogs_cny_confidence as ConfidenceLevel | null}
-          />
+          {product.supply_type === 'domestic_vendor' ? (
+            <PriceTile
+              label="원가 (원)"
+              value={
+                product.cogs_krw !== null
+                  ? `₩ ${Number(product.cogs_krw).toLocaleString('ko-KR', { maximumFractionDigits: KRW_DECIMALS })}`
+                  : '미입력'
+              }
+              confidence={product.cogs_cny_confidence as ConfidenceLevel | null}
+            />
+          ) : (
+            <PriceTile
+              label="원가 (위안)"
+              value={
+                product.cogs_cny !== null
+                  ? `¥ ${Number(product.cogs_cny).toFixed(CNY_DECIMALS)}`
+                  : '미입력'
+              }
+              confidence={product.cogs_cny_confidence as ConfidenceLevel | null}
+            />
+          )}
           <PriceTile
             label="예상 판매가"
             value={
@@ -320,9 +355,11 @@ export default async function ProductDetailPage({ params }: PageProps) {
               description: product.description,
               cogs_cny: product.cogs_cny,
               cogs_cny_confidence: product.cogs_cny_confidence,
+              cogs_krw: product.cogs_krw,
               selling_price_krw: product.selling_price_krw,
               margin_rate: product.margin_rate,
               margin_rate_confidence: product.margin_rate_confidence,
+              supply_type: product.supply_type,
             }}
           />
         </div>

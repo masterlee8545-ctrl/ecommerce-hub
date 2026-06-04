@@ -100,6 +100,7 @@ interface ParsedProductFormData {
   description: string | null;
   cogsCny: number | null;
   cogsCnyConfidence: ConfidenceLevel | undefined;
+  cogsKrw: number | null;
   sellingPriceKrw: number | null;
   marginRate: number | null;
   marginRateConfidence: ConfidenceLevel | undefined;
@@ -117,6 +118,7 @@ function validateForm(
   const description = getOptionalStringField(form, 'description');
   const cogsCny = parseDecimalField(form, 'cogsCny');
   const cogsCnyConfidence = parseConfidenceField(form, 'cogsCnyConfidence');
+  const cogsKrw = parseDecimalField(form, 'cogsKrw');
   const sellingPriceKrw = parseDecimalField(form, 'sellingPriceKrw');
   const marginRate = parseMarginRateField(form);
   const marginRateConfidence = parseConfidenceField(form, 'marginRateConfidence');
@@ -153,6 +155,7 @@ function validateForm(
       description,
       cogsCny,
       cogsCnyConfidence,
+      cogsKrw,
       sellingPriceKrw,
       marginRate,
       marginRateConfidence,
@@ -189,6 +192,7 @@ export async function createProductAction(
       description: validated.data.description,
       cogsCny: validated.data.cogsCny,
       cogsCnyConfidence: validated.data.cogsCnyConfidence,
+      cogsKrw: validated.data.cogsKrw,
       sellingPriceKrw: validated.data.sellingPriceKrw,
       marginRate: validated.data.marginRate,
       marginRateConfidence: validated.data.marginRateConfidence,
@@ -244,6 +248,7 @@ export async function updateProductAction(
       description: validated.data.description,
       cogsCny: validated.data.cogsCny,
       cogsCnyConfidence: validated.data.cogsCnyConfidence,
+      cogsKrw: validated.data.cogsKrw,
       sellingPriceKrw: validated.data.sellingPriceKrw,
       marginRate: validated.data.marginRate,
       marginRateConfidence: validated.data.marginRateConfidence,

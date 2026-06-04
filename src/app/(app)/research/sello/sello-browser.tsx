@@ -9,7 +9,7 @@
  */
 'use client';
 
-import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 
 import { useRouter } from 'next/navigation';
 
@@ -17,6 +17,8 @@ import { AlertCircle, Loader2, Plus, ShoppingCart, StopCircle, X } from 'lucide-
 import { toast } from 'sonner';
 
 import { bulkAddToBasketAction } from '@/lib/products/actions';
+
+import { KeywordSeasonChart } from './keyword-season-chart';
 
 interface TreeLevel {
   level: number;
@@ -38,6 +40,12 @@ interface Keyword {
   competition: number;
   monthlyQcCnt: number;
   estimatedQcCnt: number;
+  /** 작년 총 검색량 (월별 환산 baseline) */
+  totalSearchCounts_lastyear: number;
+  /** 최대검색월 (예: '2025-07') */
+  maxMonth: string;
+  /** 최대검색월의 검색량 */
+  maxMonth_qc: number;
   seasonality: string;
   isBrandKey: number;
   isCommerceKey: number;
@@ -147,7 +155,23 @@ export function SelloBrowser({
 
   // 선택 (체크박스)
   const [selectedKeywords, setSelectedKeywords] = useState<Set<string>>(new Set());
+  /** 시즌 차트가 펼쳐진 키워드 (계절성 셀 클릭 시 토글) */
+  const [expandedKeywords, setExpandedKeywords] = useState<Set<string>>(new Set());
   const [selectedCompanyId, setSelectedCompanyId] = useState(targetCompanyId);
+
+  // 시즌 월 필터 — 0 이면 비활성, 1~12 면 그 달 기준 점수 매기기
+  const [seasonMonth, setSeasonMonth] = useState<number>(0);
+  // 키워드별 시즌 점수 (캐시된 키워드만, null = 캐시 없음)
+  const [seasonScores, setSeasonScores] = useState<
+    Map<
+      string,
+      | { score: number; reason: string; peak_month: number; prep_month: number; seasonality_ratio: number }
+      | null
+    >
+  >(new Map());
+  const [seasonLoading, setSeasonLoading] = useState(false);
+  // 최소 시즌 점수 필터 (1~5, 0 = 비활성)
+  const [minSeasonScore, setMinSeasonScore] = useState<number>(0);
 
   // 리뷰 분포 분석 결과 (사용자 핵심 use case: <500 리뷰가 10개 이상인지)
   // 키: 키워드 / 값: 'pending' = 분석중, 'error' = 실패, 객체 = 성공
@@ -324,7 +348,7 @@ export function SelloBrowser({
       const target = pending[i];
       if (!target) continue;
       // 순차 — sello rate-limit 방지
-      // eslint-disable-next-line no-await-in-loop
+       
       await analyzeOne(target.keyword);
       setBulkProgress({ done: i + 1, total: pending.length });
     }
@@ -337,6 +361,75 @@ export function SelloBrowser({
     const n = Number(s);
     return s.trim() === '' || Number.isNaN(n) ? null : n;
   }
+
+  // 시즌 점수 자동 로드 — seasonMonth 변경 또는 키워드 목록 변경 시
+  useEffect(() => {
+    if (seasonMonth === 0 || !mergedKeywords || mergedKeywords.length === 0) {
+      setSeasonScores(new Map());
+      return;
+    }
+    const keywords = mergedKeywords.map((k) => k.keyword);
+    setSeasonLoading(true);
+    fetch('/api/sellochomes/season-scores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keywords, month: seasonMonth }),
+    })
+      .then((r) => r.json())
+      .then((body: unknown) => {
+        if (
+          body &&
+          typeof body === 'object' &&
+          'ok' in body &&
+          (body as { ok: unknown }).ok === true &&
+          'scores' in body
+        ) {
+          const ok = body as {
+            ok: true;
+            scores: Record<
+              string,
+              | {
+                  score: number;
+                  reason: string;
+                  analysis: {
+                    peak_month: number;
+                    prep_month: number;
+                    seasonality_ratio: number;
+                  };
+                }
+              | null
+            >;
+          };
+          const map = new Map<
+            string,
+            | {
+                score: number;
+                reason: string;
+                peak_month: number;
+                prep_month: number;
+                seasonality_ratio: number;
+              }
+            | null
+          >();
+          for (const [kw, sc] of Object.entries(ok.scores)) {
+            if (sc === null) map.set(kw, null);
+            else
+              map.set(kw, {
+                score: sc.score,
+                reason: sc.reason,
+                peak_month: sc.analysis.peak_month,
+                prep_month: sc.analysis.prep_month,
+                seasonality_ratio: sc.analysis.seasonality_ratio,
+              });
+          }
+          setSeasonScores(map);
+        }
+      })
+      .catch(() => {
+        // 무시 — UI 에서 점수 없음으로 표시됨
+      })
+      .finally(() => setSeasonLoading(false));
+  }, [seasonMonth, mergedKeywords]);
 
   // ── 필터 적용 ──
   const filtered = useMemo(() => {
@@ -363,6 +456,12 @@ export function SelloBrowser({
         const d = reviewDist.get(k.keyword);
         if (typeof d === 'object' && d.underThresholdCount < fMinDistUnder) return false;
       }
+      // 시즌 점수 필터 (seasonMonth > 0 일 때만)
+      if (seasonMonth > 0 && minSeasonScore > 0) {
+        const ss = seasonScores.get(k.keyword);
+        if (!ss) return false; // 캐시 없으면 컷
+        if (ss.score < minSeasonScore) return false;
+      }
       return true;
     });
   }, [
@@ -378,6 +477,9 @@ export function SelloBrowser({
     maxAvgPrice,
     minReviewDistUnder500,
     reviewDist,
+    seasonMonth,
+    minSeasonScore,
+    seasonScores,
   ]);
 
   // ── 정렬 적용 (필터 다음 단계) ──
@@ -764,6 +866,52 @@ export function SelloBrowser({
             </div>
           </div>
 
+          {/* 🌊 시즌 필터 */}
+          <div className="mt-4 grid grid-cols-1 gap-3 rounded-md border border-violet-200 bg-violet-50/30 p-3 text-xs md:grid-cols-3">
+            <div title="이 달 기준으로 시즌 점수 매기기 (캐시된 키워드만)">
+              <label className="block font-semibold text-violet-700">🌊 시즌 월 분석</label>
+              <select
+                value={seasonMonth}
+                onChange={(e) => setSeasonMonth(parseInt(e.target.value, 10))}
+                className="mt-1 h-8 w-full rounded border border-violet-200 bg-white px-2 text-sm"
+              >
+                <option value={0}>비활성 (시즌 분석 안 함)</option>
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                  <option key={m} value={m}>
+                    {m}월 기준
+                  </option>
+                ))}
+              </select>
+            </div>
+            {seasonMonth > 0 && (
+              <div title="최소 시즌 점수 — 5점이 가장 강력 (지금 소싱 시작!)">
+                <label className="block font-semibold text-violet-700">최소 시즌 점수</label>
+                <select
+                  value={minSeasonScore}
+                  onChange={(e) => setMinSeasonScore(parseInt(e.target.value, 10))}
+                  className="mt-1 h-8 w-full rounded border border-violet-200 bg-white px-2 text-sm"
+                >
+                  <option value={0}>전체 (필터 X)</option>
+                  <option value={1}>1점 이상 (진행 중)</option>
+                  <option value={2}>2점 이상 (다음달 피크)</option>
+                  <option value={4}>4점 이상 (이번달 급상승)</option>
+                  <option value={5}>5점만 (지금 소싱!)</option>
+                </select>
+              </div>
+            )}
+            {seasonMonth > 0 && (
+              <div className="flex items-end text-[11px] text-violet-700">
+                {seasonLoading ? (
+                  <span>⏳ 시즌 점수 분석 중…</span>
+                ) : (
+                  <span>
+                    분석 완료 · 캐시 있는 키워드만 점수 표시 (캐시 없으면 표에 &quot;—&quot;)
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* 일괄 담기 */}
           {filtered.length > 0 && (
             <BulkAddForm
@@ -833,17 +981,31 @@ export function SelloBrowser({
                     <SortableTh label="쿠팡 상품수" column="productCount" align="right" sortBy={sortBy} onClick={toggleSort} />
                     <SortableTh label="평균가" column="avgPrice" align="right" sortBy={sortBy} onClick={toggleSort} />
                     <th className="px-2 py-2 text-left">계절성</th>
+                    {seasonMonth > 0 && (
+                      <th className="px-2 py-2 text-left text-violet-700" title={`${seasonMonth}월 기준 시즌 점수`}>
+                        🌊 시즌 ({seasonMonth}월)
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
                   {sortedFiltered.map((k, idx) => {
                     const isSelected = selectedKeywords.has(k.keyword);
+                    const isExpanded = expandedKeywords.has(k.keyword);
+                    const toggleExpand = () => {
+                      setExpandedKeywords((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(k.keyword)) next.delete(k.keyword);
+                        else next.add(k.keyword);
+                        return next;
+                      });
+                    };
                     return (
+                      <Fragment key={k.keyword}>
                       <tr
-                        key={k.keyword}
                         className={`border-b border-navy-100 hover:bg-violet-50/30 ${
                           isSelected ? 'bg-violet-50/50' : ''
-                        }`}
+                        } ${isExpanded ? 'bg-violet-50/40' : ''}`}
                       >
                         <td className="px-2 py-1.5">
                           <input
@@ -957,10 +1119,89 @@ export function SelloBrowser({
                         <td className="px-2 py-1.5 text-right tabular-nums text-navy-600">
                           {k.c_avgPrice ? `₩${k.c_avgPrice.toLocaleString('ko-KR')}` : '-'}
                         </td>
-                        <td className="px-2 py-1.5 text-left text-navy-600">
-                          {k.seasonality === '있음' ? '📅' : '-'}
+                        <td className="px-2 py-1.5 text-left">
+                          <button
+                            type="button"
+                            onClick={toggleExpand}
+                            className={`group inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition ${
+                              isExpanded
+                                ? 'bg-violet-100 text-violet-800'
+                                : k.seasonality === '있음'
+                                  ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                                  : 'text-navy-500 hover:bg-navy-50'
+                            }`}
+                            title={
+                              isExpanded
+                                ? '시즌 차트 닫기'
+                                : '클릭하면 작년 12개월 검색 추이 막대그래프 펼침'
+                            }
+                          >
+                            {k.seasonality === '있음' ? '📅' : '📊'}
+                            <span className="font-semibold">
+                              {k.seasonality === '있음' ? '시즌' : '차트'}
+                            </span>
+                            <span className="text-navy-400 group-hover:text-current">
+                              {isExpanded ? '▴' : '▾'}
+                            </span>
+                          </button>
                         </td>
+                        {seasonMonth > 0 && (
+                          <td className="px-2 py-1.5 text-left">
+                            {(() => {
+                              const ss = seasonScores.get(k.keyword);
+                              if (ss === undefined) {
+                                return <span className="text-[11px] text-navy-300">…</span>;
+                              }
+                              if (ss === null) {
+                                return (
+                                  <span
+                                    className="text-[11px] text-navy-400"
+                                    title="이 키워드는 캐시에 없습니다. 계절성 클릭으로 분석 후 다시 시즌 월 변경 시 점수가 매겨집니다."
+                                  >
+                                    —
+                                  </span>
+                                );
+                              }
+                              if (ss.score === 0) {
+                                return (
+                                  <span
+                                    className="text-[11px] text-navy-400"
+                                    title="이 달은 시즌 아님 (하락 중 또는 비활성)"
+                                  >
+                                    0
+                                  </span>
+                                );
+                              }
+                              const colorMap: Record<number, string> = {
+                                5: 'bg-amber-100 text-amber-800',
+                                4: 'bg-emerald-100 text-emerald-800',
+                                2: 'bg-rose-100 text-rose-800',
+                                1: 'bg-violet-100 text-violet-800',
+                              };
+                              return (
+                                <span
+                                  className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-bold ${colorMap[ss.score] ?? 'bg-navy-100 text-navy-700'}`}
+                                  title={`${ss.reason} · 피크 ${ss.peak_month}월 · 시즌성 ${ss.seasonality_ratio.toFixed(1)}x`}
+                                >
+                                  {'★'.repeat(ss.score)}
+                                </span>
+                              );
+                            })()}
+                          </td>
+                        )}
                       </tr>
+                      {isExpanded && (
+                        <tr className="border-b border-violet-200 bg-violet-50/30">
+                          <td colSpan={seasonMonth > 0 ? 11 : 10} className="p-0">
+                            <KeywordSeasonChart
+                              keyword={k.keyword}
+                              yearTotalSearch={k.totalSearchCounts_lastyear}
+                              monthlyAvgSearch={k.monthlyQcCnt}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -1057,7 +1298,7 @@ function BulkAddForm({
     const map = new Map<string, string>();
     for (const k of keywords) map.set(k.keyword, buildDescription(k));
     return map;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [keywords]);
 
   return (

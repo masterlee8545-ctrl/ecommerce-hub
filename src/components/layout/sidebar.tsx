@@ -87,6 +87,14 @@ const SECTIONS: NavSection[] = [
     ],
   },
   {
+    title: '공급처 관리',
+    items: [
+      { href: '/vendors', label: '농가 검색', description: '1,835명 농가/수산물 도매 풀' },
+      { href: '/vendors/discover', label: '외부 발굴', description: '네이버 + 카카오 검색' },
+      { href: '/vendors/import', label: 'CSV 임포트', description: '사이소/김제몰 데이터' },
+    ],
+  },
+  {
     title: '운영',
     items: [
       { href: '/products', label: '전체 상품', description: '상품 목록 + 현황' },
@@ -105,7 +113,7 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="hidden h-screen w-60 shrink-0 flex-col border-r border-navy-200 bg-white md:flex">
+    <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col self-start border-r border-navy-200 bg-white md:flex">
       {/* 로고 */}
       <div className="flex h-16 items-center gap-2 border-b border-navy-200 px-5">
         <div className="flex h-8 w-8 items-center justify-center rounded-md bg-teal-600 text-sm font-bold text-white">

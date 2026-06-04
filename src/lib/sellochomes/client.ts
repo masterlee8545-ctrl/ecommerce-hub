@@ -134,7 +134,7 @@ export class SellochomesError extends Error {
 // ─────────────────────────────────────────────────────────
 
 declare global {
-  // eslint-disable-next-line no-var
+   
   var __sellochomesCookieCache:
     | { value: string; cachedAt: number }
     | undefined;
@@ -380,12 +380,204 @@ export async function hasSellochomesCookie(): Promise<boolean> {
 }
 
 // ─────────────────────────────────────────────────────────
-// 쿠팡 키워드 1페이지 상품 분석 (직접 API)
+// keyword-caching/recent — 셀록홈즈 새 통합 endpoint (2026~)
 // ─────────────────────────────────────────────────────────
 //
-// 셀록홈즈 사용량 1회 차감 = 1키워드 분석 (사장님 구독 한도 내)
-// 이 API 가 주는 데이터는 셀록홈즈가 화면에 노출하는 것과 동일.
-// 셀러라이프 확장이 필요한 판매량/조회수는 null 로 옴 (우리는 리뷰만 필요).
+// 기존 coupangKeywordInfo 는 deprecate 됨 (502 던짐).
+// 신규 endpoint 는 한 번의 POST 로 네이버 검색량 + 쿠팡 1페이지 + 연관 키워드 다 줌.
+//
+// 호출 패턴:
+//   POST /api/v1/keyword-caching/recent
+//   body: [{ category: 'coupang-analysis-keyword', keyword, startDate, endDate }]
+//   - startDate/endDate: 'YYYYMMDD' (어제 ~ 오늘 권장; 셀록홈즈가 캐시 윈도우로 사용)
+//
+// 추가 필수 쿠키 (connect.sid 외):
+//   sourcinglife_visitor_id, _ga, _ga_*
+// 없으면 백엔드가 502 "쿠팡 응답이 없습니다" 던짐.
+
+const KEYWORD_CACHING_URL = 'https://sellochomes.co.kr/api/v1/keyword-caching/recent';
+
+/** 셀록홈즈 화면 1~20등(+α) 한 상품 row */
+export interface SCShoppingListItem {
+  url: string;
+  isAd: boolean;
+  isPb: boolean;
+  rank: number;
+  price: number;
+  title: string;
+  itemid: string;
+  prdImg: string;
+  coupangId: string;
+  reviewCnt: number;
+  hasBrandTag: boolean;
+  discountRate: number | null;
+  discountPrice: number | null;
+  originalPrice: number | null;
+  /** 'rocket' | 'merchant' | 'domestic' | 'foreign' */
+  shippingMethod: string;
+  /** '로켓배송' | '판매자로켓' | '국내배송' | '해외배송' */
+  koShippingMethod: string;
+}
+
+export interface SCKeywordCachingItem {
+  id: number;
+  category: string;
+  keyword: string;
+  data: {
+    naver: {
+      monthlyQcCnt?: number;
+      totalSearchCounts_lastyear?: number;
+      chartData?: unknown;
+    };
+    coupang: {
+      totalCnt: number;
+      avgPrice: number;
+      avgReviewCnt: string; // 문자열로 옴
+      maxReviewCnt: number;
+      rocketCnt: number;
+      rocketRatio: number; // 0~100 (%)
+      pbRatio: number;
+      ovsRatio: number;
+      ovsCnt: number;
+      shoppingList: SCShoppingListItem[];
+      keyword?: {
+        popular?: Array<{ keyword: string; totalcnt: string }>;
+        related?: string[];
+        category?: string[];
+        autocomplete?: string[];
+      };
+      top1ReviewRatio?: number;
+      top3ReviewRatio?: number;
+      merchantRocketCnt?: number;
+      merchantRocketReviewCnt?: number;
+      rocketReviewCnt?: number;
+    };
+  };
+}
+
+const COMMON_BROWSER_COOKIES: Record<string, string> = {
+  _ga: 'GA1.1.1450049607.1774702885',
+  sourcinglife_visitor_id:
+    'guest_48674b7920c304cc5f095f081884b1ebe5980f833ecb905d59ad836097065ecf',
+};
+
+function yyyymmdd(d: Date): string {
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * 키워드 분석 데이터 한 번에 가져오기.
+ * 1초/키워드. 100개 batch 처리 가능.
+ */
+export async function fetchKeywordCaching(
+  keyword: string,
+): Promise<SCKeywordCachingItem> {
+  const trimmed = keyword.trim();
+  if (!trimmed) {
+    throw new SellochomesError('키워드가 비어있습니다.', 'bad_response');
+  }
+
+  const sid = await getCookieValue();
+  const cookieHeader = Object.entries({
+    ...COMMON_BROWSER_COOKIES,
+    'connect.sid': sid,
+  })
+    .map(([k, v]) => `${k}=${v}`)
+    .join('; ');
+
+  const today = new Date();
+  const yesterday = new Date(today.getTime() - 86_400_000);
+  const body = JSON.stringify([
+    {
+      category: 'coupang-analysis-keyword',
+      keyword: trimmed,
+      startDate: yyyymmdd(yesterday),
+      endDate: yyyymmdd(today),
+    },
+  ]);
+
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(KEYWORD_CACHING_URL, {
+      method: 'POST',
+      headers: {
+        Cookie: cookieHeader,
+        Accept: 'application/json, text/plain, */*',
+        'Content-Type': 'application/json',
+        Origin: 'https://sellochomes.co.kr',
+        Referer: `https://sellochomes.co.kr/sellerlife/coupang-analysis-keyword/?keyword=${encodeURIComponent(trimmed)}`,
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
+      },
+      body,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(tid);
+    throw new SellochomesError(
+      `keyword-caching API 연결 실패: ${err instanceof Error ? err.message : String(err)}`,
+      'network',
+    );
+  }
+  clearTimeout(tid);
+
+  if (res.status === 401 || res.status === 403) {
+    throw new SellochomesError('셀록홈즈 세션 만료', 'auth_expired');
+  }
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new SellochomesError(
+      `keyword-caching HTTP ${res.status}: ${txt.slice(0, 200)}`,
+      'bad_response',
+    );
+  }
+
+  const arr = (await res.json()) as Array<SCKeywordCachingItem | null>;
+  if (!Array.isArray(arr) || arr.length === 0) {
+    throw new SellochomesError('keyword-caching 빈 응답', 'bad_response');
+  }
+  const first = arr[0];
+  if (!first || !first.data) {
+    throw new SellochomesError(
+      'keyword-caching 데이터 없음 (셀록홈즈 캐시 미스 — 셀록홈즈 화면에서 키워드 검색 후 재시도)',
+      'bad_response',
+    );
+  }
+  return first;
+}
+
+/**
+ * shoppingList 에서 리뷰 분포 분석.
+ * 광고/PB 제외, 리뷰 < threshold 인 개수 카운트.
+ */
+export function analyzeKeywordCaching(
+  item: SCKeywordCachingItem,
+  options?: { threshold?: number; majorityCount?: number },
+): ReviewDistribution {
+  const threshold = options?.threshold ?? 300;
+  const majorityCount = options?.majorityCount ?? 12;
+  const list = item.data.coupang.shoppingList ?? [];
+  const real = list.filter((it) => !it.isAd && !it.isPb);
+  const reviewCounts = real.map((it) => it.reviewCnt);
+  const under = reviewCounts.filter((r) => r < threshold).length;
+  return {
+    keyword: item.keyword,
+    totalProducts: list.length,
+    realProducts: real.length,
+    underThresholdCount: under,
+    underThresholdRatio: real.length > 0 ? under / real.length : 0,
+    isMajority: under >= majorityCount,
+    threshold,
+    majorityCount,
+    reviewCounts,
+  };
+}
+
+// ─────────────────────────────────────────────────────────
+// 쿠팡 키워드 1페이지 상품 분석 (LEGACY — deprecate 됨, 502)
+// ─────────────────────────────────────────────────────────
 
 const KEYWORD_INFO_BASE = 'https://sellochomes.co.kr/api/v1/sellerlife/keyword-analysis/coupang-keyword';
 
@@ -558,4 +750,108 @@ export function analyzeReviewDistribution(
     majorityCount,
     reviewCounts,
   };
+}
+
+// ─────────────────────────────────────────────────────────
+// 키워드 chart API (일별 ratio 트렌드 — 시즌 분석용)
+// ─────────────────────────────────────────────────────────
+//
+// POST /api/v1/sellerlife/keyword-analysis/chart
+// Body: {"keyword": "..."}
+// Response: 2016-01-02 ~ 어제까지의 일별 ratio (0~100 상대지수).
+// 키워드당 ~3,800개 데이터 포인트, ~21KB.
+//
+// 화면의 "월간/1년/3년" 드롭다운은 클라이언트 사이드 표시 변경일 뿐,
+// API 는 항상 일별 데이터만 반환. 우리가 직접 월별로 집계한다.
+
+const CHART_URL = 'https://sellochomes.co.kr/api/v1/sellerlife/keyword-analysis/chart';
+
+export interface SCChartDataPoint {
+  /** 'YYYY-MM-DD' */
+  period: string;
+  /** 0~100 상대지수 (그 기간 내 최댓값=100) */
+  ratio: number;
+}
+
+export interface SCChartResponse {
+  success: boolean;
+  data?: {
+    startDate: string;
+    endDate: string;
+    timeUnit: string; //   'date'
+    results: Array<{
+      title: string;
+      keywords: string[];
+      data: SCChartDataPoint[];
+    }>;
+  };
+}
+
+/**
+ * 키워드 일별 ratio 조회 (10년치 전체).
+ *
+ * @returns 일별 데이터 배열. 키워드가 셀록홈즈에 없으면 빈 배열.
+ * @throws SellochomesError 인증 만료/네트워크/응답 깨짐
+ */
+export async function fetchKeywordChart(keyword: string): Promise<SCChartDataPoint[]> {
+  const trimmed = keyword.trim();
+  if (!trimmed) {
+    throw new SellochomesError('키워드가 비어있습니다.', 'bad_response');
+  }
+
+  const cookieHeader = await getCookieHeader();
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(CHART_URL, {
+      method: 'POST',
+      headers: {
+        Cookie: cookieHeader,
+        Accept: 'application/json, text/plain, */*',
+        'Content-Type': 'application/json',
+        Origin: 'https://sellochomes.co.kr',
+        Referer: 'https://sellochomes.co.kr/sellerlife/keyword-analysis/',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
+      },
+      body: JSON.stringify({ keyword: trimmed }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(tid);
+    throw new SellochomesError(
+      `chart API 연결 실패: ${err instanceof Error ? err.message : String(err)}`,
+      'network',
+    );
+  }
+  clearTimeout(tid);
+
+  if (res.status === 401 || res.status === 403) {
+    throw new SellochomesError(
+      '셀록홈즈 세션이 만료됐습니다. 쿠키를 재발급하세요.',
+      'auth_expired',
+    );
+  }
+  if (!res.ok) {
+    throw new SellochomesError(
+      `chart API 응답 실패 (HTTP ${res.status})`,
+      'bad_response',
+    );
+  }
+
+  const body = (await res.json()) as SCChartResponse;
+  if (!body.success || !body.data) {
+    throw new SellochomesError(
+      `chart API success=false`,
+      'bad_response',
+    );
+  }
+
+  const results = body.data.results ?? [];
+  if (results.length === 0) {
+    return [];
+  }
+  return results[0]?.data ?? [];
 }
