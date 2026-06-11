@@ -70,6 +70,17 @@ function median(arr: number[]): number | null {
         const reviews = real.map((it) => it.reviewCnt).filter((n) => n >= 0);
         const dist = analyzeKeywordCaching(item, { threshold: 300, majorityCount: 12 });
 
+        // 선정 보완 지표 (0022)
+        const adCount = list.filter((it) => it.isAd).length;
+        const reviewTotal = reviews.reduce((a, b) => a + b, 0);
+        const sortedReviews = [...reviews].sort((a, b) => b - a);
+        const top1Share =
+          reviewTotal > 0 ? (((sortedReviews[0] ?? 0) / reviewTotal) * 100).toFixed(1) : null;
+        const top3Share =
+          reviewTotal > 0
+            ? ((sortedReviews.slice(0, 3).reduce((a, b) => a + b, 0) / reviewTotal) * 100).toFixed(1)
+            : null;
+
         const topListings = real.slice(0, 20).map((it) => ({
           rank: it.rank,
           title: it.title,
@@ -103,6 +114,9 @@ function median(arr: number[]): number | null {
               coupang_avg_review_count: coupangAvgReview,
               coupang_max_review_count: coupangMaxReview,
               coupang_low_review_count: dist.underThresholdCount,
+              coupang_ad_count: adCount,
+              coupang_top1_share: top1Share,
+              coupang_top3_share: top3Share,
               monthly_search_volume: naverMonthly,
               market_prices_updated_at: new Date(),
             })
