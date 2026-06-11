@@ -119,6 +119,16 @@ export const products = pgTable(
     /** ⭐ 형 핵심 메트릭: 1페이지 20개 중 리뷰 300 이하 상품 수 (진입 자리) */
     coupang_low_review_count: integer('coupang_low_review_count'),
 
+    // ─── 선정 보완 지표 (0022) ───
+    /** 쿠팡 1페이지 광고 상품 수 — 8+ 이면 광고 의존 시장 */
+    coupang_ad_count: integer('coupang_ad_count'),
+    /** 1위 리뷰 점유율 % — 30%+ 이면 1등 독점 시장 경고 */
+    coupang_top1_share: numeric('coupang_top1_share', { precision: 5, scale: 1 }),
+    /** 상위 3개 리뷰 점유율 % */
+    coupang_top3_share: numeric('coupang_top3_share', { precision: 5, scale: 1 }),
+    /** 검색량 YoY 성장률 % (최근 91일 vs 작년 동기, keyword_chart_daily) */
+    search_growth_pct: numeric('search_growth_pct', { precision: 6, scale: 1 }),
+
     // 담당자 (3종 — 워크플로우 책임 분리)
     owner_user_id: uuid('owner_user_id').references(() => users.id),
     /** 상세페이지 기획·제작 담당 (Step 4) */

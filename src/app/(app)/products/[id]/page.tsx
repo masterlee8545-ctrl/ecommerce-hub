@@ -35,6 +35,7 @@ import {
   XCircle,
 } from 'lucide-react';
 
+import { MarginCalculator } from '@/components/products/margin-calculator';
 import { MarketingPanel } from '@/components/products/marketing-panel';
 import { WorkflowPanel } from '@/components/products/workflow-panel';
 import type { Quote } from '@/db/schema';
@@ -257,6 +258,25 @@ export default async function ProductDetailPage({ params }: PageProps) {
           </div>
         )}
       </header>
+
+      {/* 시장 분석 — 선정 보완 지표 (독점도/광고/성장률) */}
+      <MarketQualitySection product={product} />
+
+      {/* 실마진 계산기 — 등록 전 검증 의무화 도구 */}
+      <MarginCalculator
+        initialCny={product.cogs_cny !== null ? Number(product.cogs_cny) : null}
+        initialKrw={product.cogs_krw !== null ? Number(product.cogs_krw) : null}
+        supplyType={product.supply_type}
+        marketMedian={
+          product.coupang_price_median !== null ? Number(product.coupang_price_median) : null
+        }
+        marketMin={
+          product.coupang_price_min !== null ? Number(product.coupang_price_min) : null
+        }
+        marketMax={
+          product.coupang_price_max !== null ? Number(product.coupang_price_max) : null
+        }
+      />
 
       {/* 워크플로우 — 1688 링크 · 담당자 3명 · 기획서 바로가기 (Step 3/4/5) */}
       <WorkflowPanel
@@ -489,6 +509,105 @@ function PriceTile({ label, value, confidence }: PriceTileProps) {
           {meta.label}
         </span>
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+// 시장 분석 — 선정 보완 지표 (0022)
+// ─────────────────────────────────────────────────────────
+
+const TOP1_WARN_PCT = 30;
+const AD_WARN_COUNT = 8;
+
+interface MarketQualitySectionProps {
+  product: NonNullable<Awaited<ReturnType<typeof getProductById>>>;
+}
+
+function MarketQualitySection({ product }: MarketQualitySectionProps) {
+  const lowReview = product.coupang_low_review_count;
+  const sample = product.coupang_price_sample_size ?? 0;
+  const top1 = product.coupang_top1_share !== null ? Number(product.coupang_top1_share) : null;
+  const top3 = product.coupang_top3_share !== null ? Number(product.coupang_top3_share) : null;
+  const adCount = product.coupang_ad_count;
+  const growth = product.search_growth_pct !== null ? Number(product.search_growth_pct) : null;
+  const monthly = product.monthly_search_volume;
+
+  const hasAny =
+    lowReview !== null || top1 !== null || adCount !== null || growth !== null || monthly !== null;
+  if (!hasAny) return null;
+
+  return (
+    <section className="rounded-lg border border-navy-200 bg-white p-5 shadow-sm">
+      <h2 className="text-sm font-semibold text-navy-700">시장 분석 — 진입해도 되는 시장인가</h2>
+      <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-5">
+        <MetricTile
+          label="월 검색량"
+          value={monthly !== null ? monthly.toLocaleString('ko-KR') : '—'}
+          tone="neutral"
+        />
+        <MetricTile
+          label="진입 자리 (리뷰≤300)"
+          value={lowReview !== null && sample > 0 ? `${lowReview}/${sample}` : '—'}
+          tone={
+            lowReview === null || sample === 0
+              ? 'neutral'
+              : lowReview >= 12
+                ? 'good'
+                : lowReview >= 6
+                  ? 'ok'
+                  : 'bad'
+          }
+          hint="많을수록 빈 자리"
+        />
+        <MetricTile
+          label="1위 독점도"
+          value={top1 !== null ? `${top1.toFixed(0)}%` : '—'}
+          tone={top1 === null ? 'neutral' : top1 >= TOP1_WARN_PCT ? 'bad' : top1 >= 15 ? 'ok' : 'good'}
+          hint={
+            top3 !== null
+              ? `상위3 ${top3.toFixed(0)}% — 30%+ 면 1등 독식 시장`
+              : '30%+ 면 1등 독식 시장'
+          }
+        />
+        <MetricTile
+          label="1페이지 광고 수"
+          value={adCount !== null ? `${adCount}개` : '— (다음 수집)'}
+          tone={adCount === null ? 'neutral' : adCount >= AD_WARN_COUNT ? 'bad' : adCount >= 4 ? 'ok' : 'good'}
+          hint="8개+ 면 광고비 필수 시장"
+        />
+        <MetricTile
+          label="검색 성장률 (YoY)"
+          value={growth !== null ? `${growth > 0 ? '+' : ''}${growth.toFixed(1)}%` : '—'}
+          tone={growth === null ? 'neutral' : growth >= 0 ? 'good' : growth >= -20 ? 'ok' : 'bad'}
+          hint="최근 91일 vs 작년 동기"
+        />
+      </div>
+    </section>
+  );
+}
+
+interface MetricTileProps {
+  label: string;
+  value: string;
+  tone: 'good' | 'ok' | 'bad' | 'neutral';
+  hint?: string;
+}
+
+function MetricTile({ label, value, tone, hint }: MetricTileProps) {
+  const toneClass =
+    tone === 'good'
+      ? 'text-emerald-700'
+      : tone === 'ok'
+        ? 'text-amber-700'
+        : tone === 'bad'
+          ? 'text-red-700'
+          : 'text-navy-900';
+  return (
+    <div className="rounded-md border border-navy-100 bg-navy-50/30 p-2">
+      <div className="text-[10px] font-semibold uppercase text-navy-500">{label}</div>
+      <div className={`mt-0.5 font-mono text-base font-bold ${toneClass}`}>{value}</div>
+      {hint && <div className="text-[9px] text-navy-400">{hint}</div>}
     </div>
   );
 }

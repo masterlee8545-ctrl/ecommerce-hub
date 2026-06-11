@@ -514,6 +514,71 @@ function MarketMetricsRow({ product }: MarketMetricsRowProps) {
           📊 쿠팡 워커 실행 후 자동 채워짐
         </div>
       )}
+
+      {/* 선정 보완 지표 (0022) — 독점도 / 광고 / 성장률 */}
+      <QualityBadgesRow product={product} />
+    </div>
+  );
+}
+
+// 독점도/광고/성장률 미니 배지 — 값 있는 것만 표시
+function QualityBadgesRow({ product }: MarketMetricsRowProps) {
+  const top1 =
+    product.coupang_top1_share !== null ? Number(product.coupang_top1_share) : null;
+  const adCount = product.coupang_ad_count;
+  const growth =
+    product.search_growth_pct !== null ? Number(product.search_growth_pct) : null;
+
+  if (top1 === null && adCount === null && growth === null) return null;
+
+  const TOP1_WARN = 30;
+  const AD_WARN = 8;
+
+  return (
+    <div className="col-span-2 flex flex-wrap gap-1 border-t border-navy-100 pt-1.5">
+      {top1 !== null && (
+        <span
+          className={`rounded px-1 py-0.5 text-[9px] font-semibold ${
+            top1 >= TOP1_WARN
+              ? 'bg-red-100 text-red-700'
+              : top1 >= 15
+                ? 'bg-amber-100 text-amber-700'
+                : 'bg-emerald-100 text-emerald-700'
+          }`}
+          title="1위 상품 리뷰 점유율 — 30%+ 면 1등 독식 시장"
+        >
+          1위 독점 {top1.toFixed(0)}%
+        </span>
+      )}
+      {adCount !== null && (
+        <span
+          className={`rounded px-1 py-0.5 text-[9px] font-semibold ${
+            adCount >= AD_WARN
+              ? 'bg-red-100 text-red-700'
+              : adCount >= 4
+                ? 'bg-amber-100 text-amber-700'
+                : 'bg-emerald-100 text-emerald-700'
+          }`}
+          title="1페이지 광고 상품 수 — 8개+ 면 광고비 필수"
+        >
+          광고 {adCount}개
+        </span>
+      )}
+      {growth !== null && (
+        <span
+          className={`rounded px-1 py-0.5 text-[9px] font-semibold ${
+            growth >= 0
+              ? 'bg-emerald-100 text-emerald-700'
+              : growth >= -20
+                ? 'bg-amber-100 text-amber-700'
+                : 'bg-red-100 text-red-700'
+          }`}
+          title="검색량 YoY 성장률 (최근 91일 vs 작년 동기)"
+        >
+          검색 {growth > 0 ? '+' : ''}
+          {growth.toFixed(0)}%
+        </span>
+      )}
     </div>
   );
 }

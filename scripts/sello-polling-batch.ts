@@ -55,6 +55,17 @@ async function saveProduct(
     (it) => it.shippingMethod === 'rocket' || it.koShippingMethod === '로켓배송',
   ).length;
 
+  // 선정 보완 지표 (0022): 광고 수 + 상위 독점도
+  const adCount = list.filter((it) => it.isAd).length;
+  const reviewTotal = reviews.reduce((a, b) => a + b, 0);
+  const sortedReviews = [...reviews].sort((a, b) => b - a);
+  const top1Share =
+    reviewTotal > 0 ? (((sortedReviews[0] ?? 0) / reviewTotal) * 100).toFixed(1) : null;
+  const top3Share =
+    reviewTotal > 0
+      ? ((sortedReviews.slice(0, 3).reduce((a, b) => a + b, 0) / reviewTotal) * 100).toFixed(1)
+      : null;
+
   const topListings = real.slice(0, 20).map((it) => ({
     rank: it.rank,
     title: it.title,
@@ -82,6 +93,9 @@ async function saveProduct(
             : null,
         coupang_max_review_count: reviews.length > 0 ? Math.max(...reviews) : null,
         coupang_low_review_count: under300,
+        coupang_ad_count: adCount,
+        coupang_top1_share: top1Share,
+        coupang_top3_share: top3Share,
         monthly_search_volume: item.data.naver.monthlyQcCnt ?? null,
         market_prices_updated_at: new Date(),
       })
