@@ -396,6 +396,12 @@ export async function hasSellochomesCookie(): Promise<boolean> {
 // 없으면 백엔드가 502 "쿠팡 응답이 없습니다" 던짐.
 
 const KEYWORD_CACHING_URL = 'https://sellochomes.co.kr/api/v1/keyword-caching/recent';
+// search = fresh 쿠팡 검색 트리거. 캐시 없는 키워드도 이걸 먼저 부르면
+// 셀록홈즈가 쿠팡 검색을 새로 시작 → recent 폴링으로 shoppingList 받아짐.
+// (형 화면이 검색 시 실제로 호출하는 endpoint — 2026-06 발견)
+const KEYWORD_SEARCH_URL = 'https://sellochomes.co.kr/api/v1/sellerlife/keyword-analysis/search';
+const CACHING_POLL_ATTEMPTS = 10;
+const CACHING_POLL_INTERVAL_MS = 1_500;
 
 /** 셀록홈즈 화면 1~20등(+α) 한 상품 row */
 export interface SCShoppingListItem {
@@ -465,32 +471,62 @@ function yyyymmdd(d: Date): string {
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
 }
 
-/**
- * 키워드 분석 데이터 한 번에 가져오기.
- * 1초/키워드. 100개 batch 처리 가능.
- */
-export async function fetchKeywordCaching(
-  keyword: string,
-): Promise<SCKeywordCachingItem> {
-  const trimmed = keyword.trim();
-  if (!trimmed) {
-    throw new SellochomesError('키워드가 비어있습니다.', 'bad_response');
-  }
-
-  const sid = await getCookieValue();
-  const cookieHeader = Object.entries({
-    ...COMMON_BROWSER_COOKIES,
-    'connect.sid': sid,
-  })
+function browserCookieHeader(sid: string): string {
+  return Object.entries({ ...COMMON_BROWSER_COOKIES, 'connect.sid': sid })
     .map(([k, v]) => `${k}=${v}`)
     .join('; ');
+}
 
+function browserHeaders(sid: string, keyword: string): Record<string, string> {
+  return {
+    Cookie: browserCookieHeader(sid),
+    Accept: 'application/json, text/plain, */*',
+    'Content-Type': 'application/json',
+    Origin: 'https://sellochomes.co.kr',
+    Referer: `https://sellochomes.co.kr/sellerlife/coupang-analysis-keyword/?keyword=${encodeURIComponent(keyword)}&page=1`,
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36',
+  };
+}
+
+/**
+ * search endpoint — fresh 쿠팡 검색 트리거.
+ * 캐시 없는 키워드는 이걸 먼저 불러야 셀록홈즈가 쿠팡 검색을 시작한다.
+ * 응답엔 네이버 검색량/연간 추이가 있지만 쿠팡 shoppingList 는 비동기 (recent 로 폴링).
+ * @returns 트리거 성공 여부 (실패해도 caller 가 recent 폴링은 시도)
+ */
+async function triggerKeywordSearch(keyword: string, sid: string): Promise<void> {
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  try {
+    const res = await fetch(
+      `${KEYWORD_SEARCH_URL}?keyword=${encodeURIComponent(keyword)}`,
+      { headers: browserHeaders(sid, keyword), signal: controller.signal },
+    );
+    if (res.status === 401 || res.status === 403) {
+      throw new SellochomesError('셀록홈즈 세션 만료', 'auth_expired');
+    }
+    // 본문은 버림 (트리거 목적). shoppingList 는 recent 로 받는다.
+    await res.text();
+  } catch (err) {
+    if (err instanceof SellochomesError) throw err;
+    // 트리거 실패는 치명적 X — recent 폴링이 캐시 있으면 성공할 수도
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
+/** recent 단발 호출 — 캐시된 데이터 있으면 반환, 없으면 null */
+async function fetchCachingOnce(
+  keyword: string,
+  sid: string,
+): Promise<SCKeywordCachingItem | null> {
   const today = new Date();
   const yesterday = new Date(today.getTime() - 86_400_000);
   const body = JSON.stringify([
     {
       category: 'coupang-analysis-keyword',
-      keyword: trimmed,
+      keyword,
       startDate: yyyymmdd(yesterday),
       endDate: yyyymmdd(today),
     },
@@ -502,15 +538,7 @@ export async function fetchKeywordCaching(
   try {
     res = await fetch(KEYWORD_CACHING_URL, {
       method: 'POST',
-      headers: {
-        Cookie: cookieHeader,
-        Accept: 'application/json, text/plain, */*',
-        'Content-Type': 'application/json',
-        Origin: 'https://sellochomes.co.kr',
-        Referer: `https://sellochomes.co.kr/sellerlife/coupang-analysis-keyword/?keyword=${encodeURIComponent(trimmed)}`,
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
-      },
+      headers: browserHeaders(sid, keyword),
       body,
       signal: controller.signal,
     });
@@ -535,17 +563,49 @@ export async function fetchKeywordCaching(
   }
 
   const arr = (await res.json()) as Array<SCKeywordCachingItem | null>;
-  if (!Array.isArray(arr) || arr.length === 0) {
-    throw new SellochomesError('keyword-caching 빈 응답', 'bad_response');
-  }
-  const first = arr[0];
-  if (!first || !first.data) {
-    throw new SellochomesError(
-      'keyword-caching 데이터 없음 (셀록홈즈 캐시 미스 — 셀록홈즈 화면에서 키워드 검색 후 재시도)',
-      'bad_response',
-    );
+  const first = Array.isArray(arr) ? arr[0] : null;
+  if (!first || !first.data || !first.data.coupang?.shoppingList?.length) {
+    return null;
   }
   return first;
+}
+
+/**
+ * 키워드 분석 데이터 가져오기 (트리거 → 폴링).
+ *
+ * 1) search endpoint 로 쿠팡 검색 트리거 (캐시 없어도 새로 검색 시작)
+ * 2) recent 를 1.5초 간격으로 폴링 — shoppingList 채워지면 반환
+ *
+ * 형 화면에서 검색하는 것과 동일 동작 → 사전 수동 검색 불필요.
+ * 키워드당 ~2~5초 (캐시 hit 면 1초).
+ */
+export async function fetchKeywordCaching(
+  keyword: string,
+): Promise<SCKeywordCachingItem> {
+  const trimmed = keyword.trim();
+  if (!trimmed) {
+    throw new SellochomesError('키워드가 비어있습니다.', 'bad_response');
+  }
+  const sid = await getCookieValue();
+
+  // 0) 캐시 즉시 hit 시도 (이미 받아본 키워드면 트리거 생략)
+  const cached = await fetchCachingOnce(trimmed, sid);
+  if (cached) return cached;
+
+  // 1) 검색 트리거
+  await triggerKeywordSearch(trimmed, sid);
+
+  // 2) 폴링
+  for (let i = 0; i < CACHING_POLL_ATTEMPTS; i++) {
+    await new Promise((r) => setTimeout(r, CACHING_POLL_INTERVAL_MS));
+    const item = await fetchCachingOnce(trimmed, sid);
+    if (item) return item;
+  }
+
+  throw new SellochomesError(
+    `keyword-caching 데이터 없음 (트리거 후 ${(CACHING_POLL_ATTEMPTS * CACHING_POLL_INTERVAL_MS) / 1000}초 폴링 실패 — 셀록홈즈 응답 지연)`,
+    'bad_response',
+  );
 }
 
 /**
