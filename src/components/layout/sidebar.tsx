@@ -113,20 +113,20 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col self-start border-r border-navy-200 bg-white md:flex">
+    <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col self-start border-r border-navy-200/70 bg-white/80 backdrop-blur-sm md:flex">
       {/* 로고 */}
-      <div className="flex h-16 items-center gap-2 border-b border-navy-200 px-5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-teal-600 text-sm font-bold text-white">
+      <div className="flex h-16 items-center gap-2.5 border-b border-navy-200/70 px-5">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-teal-500 to-teal-700 text-base font-black text-white shadow-md shadow-teal-600/25">
           B
         </div>
         <div>
-          <div className="text-sm font-bold text-navy-900">BUYWISE.CO</div>
-          <div className="text-xs text-navy-500">이커머스 통합관리</div>
+          <div className="text-sm font-bold tracking-tight text-navy-900">BUYWISE.CO</div>
+          <div className="text-[11px] text-navy-500">이커머스 통합관리</div>
         </div>
       </div>
 
       {/* 홈 */}
-      <div className="border-b border-navy-200 px-3 py-3">
+      <div className="border-b border-navy-200/70 px-3 py-3">
         <SidebarLink
           href="/"
           label="홈 대시보드"
@@ -136,10 +136,10 @@ export function Sidebar() {
       </div>
 
       {/* 섹션들 */}
-      <nav className="flex-1 overflow-y-auto px-3 py-4">
+      <nav className="scrollbar-slim flex-1 overflow-y-auto px-3 py-4">
         {SECTIONS.map((section) => (
           <div key={section.title} className="mb-6">
-            <h3 className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-navy-500">
+            <h3 className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-navy-400">
               {section.title}
             </h3>
             <ul className="space-y-0.5">
@@ -192,16 +192,30 @@ function SidebarLink({ href, label, description, step, dotColor, isActive }: Sid
     <Link
       href={href}
       className={cn(
-        'group flex items-center gap-3 rounded-md px-2 py-2 text-sm transition',
+        'group relative flex items-center gap-3 rounded-lg px-2 py-2 text-sm transition-colors duration-150',
         isActive
           ? 'bg-teal-50 text-teal-700'
-          : 'text-navy-700 hover:bg-navy-50 hover:text-navy-900',
+          : 'text-navy-700 hover:bg-navy-100/70 hover:text-navy-900',
       )}
     >
+      {/* 액티브 좌측 액센트 바 */}
+      {isActive && (
+        <span
+          className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-teal-600"
+          aria-hidden
+        />
+      )}
+
       {/* 단계 번호 점 */}
       {step !== undefined ? (
         <div className="flex h-6 w-6 shrink-0 items-center justify-center">
-          <div className={cn('h-2.5 w-2.5 rounded-full', dotColor ?? 'bg-navy-300')} aria-hidden />
+          <div
+            className={cn(
+              'h-2.5 w-2.5 rounded-full ring-2 ring-transparent transition group-hover:ring-navy-100',
+              dotColor ?? 'bg-navy-300',
+            )}
+            aria-hidden
+          />
         </div>
       ) : (
         <div className="h-6 w-6 shrink-0" aria-hidden />

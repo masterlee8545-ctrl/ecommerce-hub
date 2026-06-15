@@ -18,24 +18,26 @@ export default function AuthLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-navy-50 px-4 py-12">
+    <div className="auth-bg flex min-h-screen flex-col items-center justify-center px-4 py-12">
       <div className="w-full max-w-md">
         {/* 로고 */}
-        <div className="mb-6 text-center">
-          <div className="inline-block rounded-full bg-teal-50 px-4 py-1.5 text-xs font-semibold text-teal-700">
-            BUYWISE.CO
+        <div className="mb-7 text-center">
+          <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-500 to-teal-700 text-2xl font-black text-white shadow-lg shadow-teal-600/25">
+            B
           </div>
-          <h1 className="mt-3 text-2xl font-bold text-navy-900">이커머스 통합관리</h1>
-          <p className="mt-1 text-sm text-navy-500">6단계 파이프라인 멀티테넌트 시스템</p>
+          <h1 className="mt-4 text-2xl font-bold tracking-tight text-navy-900">
+            BUYWISE.CO
+          </h1>
+          <p className="mt-1 text-sm text-navy-500">이커머스 통합관리 · 6단계 파이프라인</p>
         </div>
 
         {/* 카드 */}
-        <div className="rounded-xl border border-navy-200 bg-white p-8 shadow-sm">
+        <div className="card-soft rounded-2xl p-8">
           {children}
         </div>
 
         {/* 푸터 */}
-        <p className="mt-6 text-center text-xs text-navy-500">
+        <p className="mt-6 text-center text-xs text-navy-400">
           © 2026 BUYWISE.CO · 내부 시스템
         </p>
       </div>

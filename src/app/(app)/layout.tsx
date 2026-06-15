@@ -33,7 +33,7 @@ export default function AppLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <div className="flex min-h-screen bg-navy-50">
+    <div className="app-shell-bg flex min-h-screen">
       {/* 좌측 고정 사이드바 */}
       <Sidebar />
 
@@ -43,7 +43,7 @@ export default function AppLayout({
         <Header />
 
         {/* 페이지 콘텐츠 */}
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+        <main className="scrollbar-slim flex-1 overflow-y-auto p-6">{children}</main>
       </div>
 
       {/* 전역 toast + URL ?flash=... 쿼리 자동 변환 */}

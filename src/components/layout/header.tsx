@@ -32,7 +32,7 @@ export async function Header({ title, subtitle }: HeaderProps) {
   const companies = await listCompaniesForUser(ctx.userId);
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-navy-200 bg-white px-6">
+    <header className="glass sticky top-0 z-30 flex h-16 items-center justify-between border-b border-navy-200/70 px-6">
       {/* 좌측 — 페이지 제목 */}
       <div className="min-w-0 flex-1">
         {title && (

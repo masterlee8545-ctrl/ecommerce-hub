@@ -95,13 +95,100 @@
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    scroll-behavior: smooth;
   }
   body {
     @apply bg-background text-foreground font-sans;
     font-feature-settings: 'rlig' 1, 'calt' 1;
+    letter-spacing: -0.011em; /* Pretendard 한글/영문 최적 자간 */
   }
   /* 한글 가독성 — 숫자 등폭 */
   .tabular-nums {
     font-variant-numeric: tabular-nums;
+  }
+
+  /* 텍스트 선택 — 브랜드 teal 틴트 */
+  ::selection {
+    background-color: rgba(13, 148, 136, 0.15);
+    color: #115e59;
+  }
+
+  /* 포커스 링 — 키보드 접근성 + teal */
+  :focus-visible {
+    outline: 2px solid rgba(13, 148, 136, 0.55);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+/* ─── 5. 디자인 레이어 (Refined Depth) ─── */
+@layer components {
+  /* 앱 셸 배경 — flat navy-50 대신 미묘한 상하 그라데이션 + teal 글로우 */
+  .app-shell-bg {
+    background-color: #f7f9fb;
+    background-image:
+      radial-gradient(60rem 60rem at 110% -10%, rgba(13, 148, 136, 0.06), transparent 60%),
+      radial-gradient(50rem 50rem at -10% 0%, rgba(59, 130, 246, 0.05), transparent 55%);
+  }
+
+  /* 인증 페이지 배경 — 더 깊은 그라데이션 메시 */
+  .auth-bg {
+    background-color: #eef2f6;
+    background-image:
+      radial-gradient(40rem 40rem at 15% 10%, rgba(13, 148, 136, 0.14), transparent 55%),
+      radial-gradient(36rem 36rem at 85% 90%, rgba(59, 130, 246, 0.12), transparent 55%),
+      radial-gradient(30rem 30rem at 90% 5%, rgba(20, 184, 166, 0.10), transparent 50%);
+  }
+
+  /* 소프트 카드 — 얇은 회색 테두리 대신 부드러운 다층 그림자 */
+  .card-soft {
+    background-color: #fff;
+    border: 1px solid rgba(17, 24, 39, 0.06);
+    box-shadow:
+      0 1px 2px rgba(17, 24, 39, 0.04),
+      0 4px 12px -2px rgba(17, 24, 39, 0.06);
+  }
+
+  /* 호버 시 살짝 떠오르는 인터랙션 */
+  .lift {
+    transition:
+      transform 0.18s ease,
+      box-shadow 0.18s ease,
+      border-color 0.18s ease;
+  }
+  .lift:hover {
+    transform: translateY(-2px);
+    box-shadow:
+      0 2px 4px rgba(17, 24, 39, 0.05),
+      0 12px 24px -6px rgba(13, 148, 136, 0.14);
+    border-color: rgba(13, 148, 136, 0.35);
+  }
+
+  /* 글래스 헤더 — 스크롤 시 콘텐츠가 비치는 반투명 */
+  .glass {
+    background-color: rgba(255, 255, 255, 0.78);
+    backdrop-filter: saturate(180%) blur(10px);
+    -webkit-backdrop-filter: saturate(180%) blur(10px);
+  }
+}
+
+/* ─── 6. 커스텀 스크롤바 (얇고 차분하게) ─── */
+@layer utilities {
+  .scrollbar-slim {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(17, 24, 39, 0.18) transparent;
+  }
+  .scrollbar-slim::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-slim::-webkit-scrollbar-thumb {
+    background-color: rgba(17, 24, 39, 0.16);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  .scrollbar-slim::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(17, 24, 39, 0.3);
   }
 }
