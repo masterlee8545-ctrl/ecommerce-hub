@@ -25,7 +25,18 @@ interface DiscoverResponse {
   naverHits: { blog: number; kin: number };
   brandCandidates: string[];
   candidates: Candidate[];
+  /**
+   * 못 채운 부분 (ADR-014).
+   *
+   * 이게 없으면 "네이버·카카오가 전부 실패" 와 "정말 후보가 없음" 이 화면에서
+   * 똑같이 "매칭된 사업장이 없어요" 로 보인다 (헌법 P-1).
+   * 옛 응답에는 없는 필드라 optional 로 둔다.
+   */
+  gaps?: string[];
 }
+
+/** 추출 키워드 칩을 몇 개까지 보여 줄 것인가. */
+const MAX_BRAND_CHIPS = 8;
 
 const CONFIDENCE_COLOR: Record<string, string> = {
   high: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -115,7 +126,7 @@ export function DiscoverClient() {
             {result.brandCandidates.length > 0 && (
               <div className="mt-1 text-xs">
                 <span className="text-navy-500">추출 키워드:</span>{' '}
-                {result.brandCandidates.slice(0, 8).map((b) => (
+                {result.brandCandidates.slice(0, MAX_BRAND_CHIPS).map((b) => (
                   <span key={b} className="mr-1 rounded bg-white px-1.5 py-0.5 text-purple-700">
                     {b}
                   </span>
@@ -124,10 +135,29 @@ export function DiscoverClient() {
             )}
           </div>
 
+          {/* 못 채운 부분 — 수집 실패를 '결과 없음' 으로 감추지 않는다 (P-1/P-3) */}
+          {result.gaps && result.gaps.length > 0 && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              <div className="font-medium">❓ 다 확인하지 못한 부분이 있어요</div>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs">
+                {result.gaps.map((gap) => (
+                  <li key={gap}>{gap}</li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-xs">
+                아래 결과는 <strong>일부만</strong> 반영된 것일 수 있어요.
+              </p>
+            </div>
+          )}
+
           {result.candidates.length === 0 ? (
             <div className="rounded-md border border-dashed border-navy-300 p-8 text-center text-navy-500">
               <p>매칭된 사업장이 없어요.</p>
-              <p className="mt-1 text-xs">더 구체적인 키워드로 검색해보세요.</p>
+              <p className="mt-1 text-xs">
+                {result.gaps && result.gaps.length > 0
+                  ? '위의 ❓ 항목 때문일 수 있어요. 잠시 후 다시 시도해보세요.'
+                  : '더 구체적인 키워드로 검색해보세요.'}
+              </p>
             </div>
           ) : (
             <div className="space-y-3">

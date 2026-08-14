@@ -24,6 +24,20 @@ import path from 'node:path';
 
 import { chromium, type BrowserContext, type Page } from 'playwright';
 
+// 배럴 대신 페이지 어댑터만 가져온다 — 배럴은 금고(→DB)까지 끌고 오는데
+// 이 스크래퍼는 DB 를 쓰지 않는다.
+import {
+  checkSelectorOnPage,
+  clickByContractOrThrow,
+  CrawlContractError,
+  extractRowsFromPage,
+  fillByRegistry,
+  healSelectorOnPage,
+  waitForContract,
+  type ExtractedRow,
+  type RowExtractionPlan,
+} from '@/lib/crawl/page';
+
 import type { SelloScrapedJson, SelloScrapedRow } from './adapter';
 
 const DEFAULT_USER_DATA = 'C:\\sello-user-data';
@@ -117,72 +131,102 @@ async function resolveExtensionPath(inputPath: string): Promise<string | null> {
 
 export type ScrapeResult =
   | { ok: true; json: SelloScrapedJson; jsonPath: string }
-  | { ok: false; reason: 'login-required' | 'locked' | 'launch-failed' | 'timeout' | 'other'; error: string };
+  | {
+      ok: false;
+      reason:
+        | 'login-required'
+        | 'locked'
+        | 'launch-failed'
+        | 'timeout'
+        | 'contract'
+        | 'other';
+      error: string;
+    };
 
 // ─────────────────────────────────────────────────────────
-// Playwright helpers (scrape.ts 와 동일 — page.evaluate 인라인 스크립트 필요)
+// 레지스트리 연동 (ADR-014)
 // ─────────────────────────────────────────────────────────
+//
+// 이 파일에는 셀록홈즈 셀렉터 문자열이 하나도 없다. 전부
+// `src/lib/crawl/selectors.json` 에 계약과 함께 들어 있다.
+// 화면이 바뀌면 고칠 곳이 한 군데이고, 자동 치유가 성공하면 코드 수정 없이 이어진다.
+//
+// 파싱도 브라우저가 아니라 Node 에서 한다 — `page.evaluate` 안에 로직을 두면
+// tsx/esbuild 의 `__name` 래퍼 문제를 피하려고 타입 없는 문자열로 적어야 했고,
+// 그 결과 같은 파서가 scrape.ts 에 복제돼 서로 어긋나 있었다.
+
+/** 표 한 행에서 무엇을 뽑을지. 값은 전부 레지스트리 셀렉터 id 다. */
+const SELLO_ROW_PLAN: RowExtractionPlan = {
+  rowSelectorId: 'sello.row',
+  rowAttrs: ['data-rank', 'data-coupangid', 'data-itemid', 'data-sourcing-monthly-amount'],
+  fields: {
+    name: { selectorId: 'sello.row_name' },
+    price: { selectorId: 'sello.row_price' },
+    review: { selectorId: 'sello.row_review' },
+    pvMonth: { selectorId: 'sello.row_pv_month' },
+    sales: { selectorId: 'sello.row_sales' },
+    salesMonth: { selectorId: 'sello.row_sales_month' },
+    cvMonth: { selectorId: 'sello.row_cv_month' },
+    sourcingPrice: { selectorId: 'sello.row_sourcing_price' },
+    expectedAmount: { selectorId: 'sello.row_expected_amount' },
+    expectedPriceRate: { selectorId: 'sello.row_expected_price_rate' },
+    imageUrl: { selectorId: 'sello.row_image', attr: 'src' },
+    productUrl: { selectorId: 'sello.row_link', attr: 'href' },
+  },
+  flags: { isRocketDelivery: 'sello.row_rocket' },
+};
+
+/** 추출 결과를 기존 JSON 포맷으로 옮긴다. 저장 포맷은 바꾸지 않는다. */
+function toScrapedRow(row: ExtractedRow): SelloScrapedRow {
+  return {
+    rank: row.attrs['data-rank'] ?? null,
+    coupangId: row.attrs['data-coupangid'] ?? null,
+    itemId: row.attrs['data-itemid'] ?? null,
+    sourcingMonthlyAmount: row.attrs['data-sourcing-monthly-amount'] ?? null,
+    name: row.fields['name'] ?? null,
+    price: row.fields['price'] ?? null,
+    review: row.fields['review'] ?? null,
+    pvMonth: row.fields['pvMonth'] ?? null,
+    sales: row.fields['sales'] ?? null,
+    salesMonth: row.fields['salesMonth'] ?? null,
+    cvMonth: row.fields['cvMonth'] ?? null,
+    sourcingPrice: row.fields['sourcingPrice'] ?? null,
+    expectedAmount: row.fields['expectedAmount'] ?? null,
+    expectedPriceRate: row.fields['expectedPriceRate'] ?? null,
+    imageUrl: row.fields['imageUrl'] ?? null,
+    productUrl: row.fields['productUrl'] ?? null,
+    isRocketDelivery: row.flags['isRocketDelivery'] === true,
+  };
+}
 
 async function parseRows(page: Page): Promise<SelloScrapedRow[]> {
-  return page.evaluate(`(() => {
-    const rows = Array.from(document.querySelectorAll("ul.td[data-rank]"));
-    return rows.map(function (row) {
-      function t(sel) {
-        const el = row.querySelector(sel);
-        return el ? (el.textContent || "").trim() : null;
-      }
-      function attr(sel, name) {
-        const el = row.querySelector(sel);
-        return el ? el.getAttribute(name) : null;
-      }
-      return {
-        rank: row.getAttribute("data-rank"),
-        coupangId: row.getAttribute("data-coupangid"),
-        itemId: row.getAttribute("data-itemid"),
-        sourcingMonthlyAmount: row.getAttribute("data-sourcing-monthly-amount"),
-        name: t("li.name .goods-name") || t("li.name"),
-        price: t("li.price"),
-        review: t("li.review .num"),
-        pvMonth: t("li.pv-month .num"),
-        sales: t("li.sales .num"),
-        salesMonth: t("li.sales-month .num"),
-        cvMonth: t("li.cv-month .num"),
-        sourcingPrice: t("li.sourcing-price"),
-        expectedAmount: t("li.expected-amount"),
-        expectedPriceRate: t("li.expected-price-rate"),
-        imageUrl: attr("li.name .prd-img img", "src"),
-        productUrl: attr("li.name .goods-name a", "href"),
-        isRocketDelivery: !!row.querySelector("li.del.rocket"),
-      };
-    });
-  })()`) as Promise<SelloScrapedRow[]>;
+  const rows = await extractRowsFromPage(page, SELLO_ROW_PLAN);
+  return rows.map(toScrapedRow);
 }
 
-async function countFilled(page: Page): Promise<{ total: number; filled: number }> {
-  return page.evaluate(`(() => {
-    const rows = Array.from(document.querySelectorAll("ul.td[data-rank]"));
-    let filled = 0;
-    for (let i = 0; i < rows.length; i++) {
-      const num = rows[i].querySelector("li.pv-month .num");
-      const raw = num ? (num.textContent || "").trim() : "";
-      if (raw && /\\d/.test(raw) && raw !== "-" && raw !== "0") filled += 1;
-    }
-    return { total: rows.length, filled: filled };
-  })()`) as Promise<{ total: number; filled: number }>;
+/**
+ * 확장이 채우는 칸(월 조회수)이 실제로 채워진 행 수.
+ *
+ * 예전에는 종료 조건과 최종 파싱이 서로 다른 `page.evaluate` 를 돌려, 원리상
+ * 다른 행 집합을 볼 수 있었다. 이제 둘 다 같은 추출 결과를 센다.
+ */
+function countFilled(rows: SelloScrapedRow[]): { total: number; filled: number } {
+  let filled = 0;
+  for (const row of rows) {
+    const raw = (row.pvMonth ?? '').trim();
+    if (raw && /\d/.test(raw) && raw !== '-' && raw !== '0') filled += 1;
+  }
+  return { total: rows.length, filled };
 }
 
-/** 리뷰가 채워진 행 수 — fast 모드 종료 조건. review 는 0 도 valid (신상품). */
-async function countWithReviews(page: Page): Promise<{ total: number; withReviews: number }> {
-  return page.evaluate(`(() => {
-    const rows = Array.from(document.querySelectorAll("ul.td[data-rank]"));
-    let withReviews = 0;
-    for (let i = 0; i < rows.length; i++) {
-      const num = rows[i].querySelector("li.review .num");
-      const raw = num ? (num.textContent || "").trim() : "";
-      if (raw && raw !== "-") withReviews += 1;
-    }
-    return { total: rows.length, withReviews: withReviews };
-  })()`) as Promise<{ total: number; withReviews: number }>;
+/** 리뷰가 채워진 행 수 — fast 모드 종료 조건. review 는 0 도 정상값이다 (신상품). */
+function countWithReviews(rows: SelloScrapedRow[]): { total: number; withReviews: number } {
+  let withReviews = 0;
+  for (const row of rows) {
+    const raw = (row.review ?? '').trim();
+    if (raw && raw !== '-') withReviews += 1;
+  }
+  return { total: rows.length, withReviews };
 }
 
 // ─────────────────────────────────────────────────────────
@@ -390,9 +434,15 @@ export async function runSelloScrape(
     await page.waitForTimeout(2000);
 
     // ── 검색 UI 준비 ────────────────────────────────────
+    // 60s — sellochomes 초기 로딩이 가끔 25~30s 걸림. 여유 있게.
+    const SEARCH_READY_TIMEOUT_MS = 60_000;
+    const SEARCH_POLL_MS = 1_500;
     try {
-      // 60s — sellochomes 초기 로딩이 가끔 25~30s 걸림. 여유 있게.
-      await page.waitForSelector('input.search-input', { timeout: 60_000 });
+      await waitForContract(page, 'sello.search_input', {
+        timeoutMs: SEARCH_READY_TIMEOUT_MS,
+        pollMs: SEARCH_POLL_MS,
+        onProgress: log,
+      });
     } catch (waitErr) {
       // 실패 — URL 이 /auth/login 으로 client-side redirect 됐는지 재체크
       const urlAfterWait = page.url();
@@ -411,46 +461,60 @@ export async function runSelloScrape(
             '구글 또는 카카오로 수동 로그인 → 완료 후 재시도.',
         };
       }
-      // 정말 다른 이유로 input 이 없음 — 진단 덤프
+      // 정말 다른 이유로 검색칸이 없음 — 진단 덤프
       const debugShot = path.join(outputDir, `_debug-no-input-${Date.now()}.png`);
       await page.screenshot({ path: debugShot, fullPage: true }).catch(() => {});
-      const bodyText = await page
-        .evaluate(`document.body ? document.body.innerText.slice(0, 1500) : ''`)
-        .catch(() => '');
-      log(`❌ search-input 못 찾음. url=${urlAfterWait}`);
-      log(`   bodyText 앞 300자: ${String(bodyText).slice(0, 300).replace(/\s+/g, ' ')}`);
+      log(`❌ 검색칸 계약 실패. url=${urlAfterWait}`);
+      log(`   ${waitErr instanceof Error ? waitErr.message : String(waitErr)}`);
       log(`   스크린샷: ${debugShot}`);
-      throw waitErr;
+      await context.close().catch(() => {});
+      releaseLock();
+      return {
+        ok: false,
+        reason: 'contract',
+        error:
+          '셀록홈즈 검색 화면을 찾지 못했습니다 (화면 구조 변경 가능). ' +
+          `진단 스크린샷: ${debugShot}. ` +
+          'data/crawl-snapshots/ 와 docs/CRAWL_REGISTRY.md 를 확인하세요.',
+      };
     }
-    await page.fill('input.search-input', trimmedKw);
 
-    // 페이지 선택 드롭다운 — "1 페이지 상품분석"
-    await page.evaluate(`(() => {
-      const btns = Array.from(document.querySelectorAll('button'));
-      for (const b of btns) {
-        if ((b.textContent || '').trim() === '선택') { b.click(); return; }
-      }
-    })()`);
-    await page.waitForTimeout(800);
-    await page.evaluate(`(() => {
-      const lis = Array.from(document.querySelectorAll('li'));
-      for (const li of lis) {
-        if ((li.textContent || '').trim() === '1 페이지 상품분석') { li.click(); return; }
-      }
-    })()`);
-    await page.waitForTimeout(500);
+    await fillByRegistry(page, 'sello.search_input', trimmedKw);
 
-    log('검색 트리거 (1페이지 분석)');
-    await page.click('button.search-icon');
+    // 분석 범위 드롭다운 — "1 페이지 상품분석"
+    //
+    // 예전에는 이 두 클릭의 성공 여부를 확인하지 않아, 버튼을 못 찾아도 조용히
+    // 넘어간 뒤 엉뚱한 범위의 결과를 수집했다. 이제 못 누르면 즉시 실패한다.
+    const DROPDOWN_OPEN_WAIT_MS = 800;
+    const DROPDOWN_PICK_WAIT_MS = 500;
+    try {
+      // 드롭다운은 원래 in-page element.click() 이었다 — Playwright 기본 클릭의
+      // 가시성·안정성 대기를 새로 끼워 넣으면 없던 실패가 생긴다.
+      await clickByContractOrThrow(page, 'sello.page_select_trigger', { programmatic: true });
+      await page.waitForTimeout(DROPDOWN_OPEN_WAIT_MS);
+      await clickByContractOrThrow(page, 'sello.page_select_option', { programmatic: true });
+      await page.waitForTimeout(DROPDOWN_PICK_WAIT_MS);
+      log('검색 트리거 (1페이지 분석)');
+      // 검색 버튼은 원래도 page.click() 이었다 — 실제 클릭 그대로 둔다
+      await clickByContractOrThrow(page, 'sello.search_button');
+    } catch (clickErr) {
+      const message = clickErr instanceof Error ? clickErr.message : String(clickErr);
+      log(`❌ 검색 조작 실패: ${message}`);
+      await context.close().catch(() => {});
+      releaseLock();
+      return {
+        ok: false,
+        reason: 'contract',
+        error: `셀록홈즈 검색을 실행하지 못했습니다. ${message}`,
+      };
+    }
 
-    await page.waitForTimeout(3000);
+    const AFTER_SEARCH_WAIT_MS = 3_000;
+    await page.waitForTimeout(AFTER_SEARCH_WAIT_MS);
 
-    // 익스텐션 미설치 모달 감지 → 명시적 에러
-    const hasExtModal = await page.evaluate(`(() => {
-      const body = document.body.innerText || '';
-      return body.includes('익스텐션 설치') || body.includes('확장 프로그램 설치');
-    })()`);
-    if (hasExtModal) {
+    // 익스텐션 미설치 안내 감지 → 명시적 에러
+    const extNotice = await checkSelectorOnPage(page, 'sello.extension_missing_notice');
+    if (extNotice.ok) {
       await context.close().catch(() => {});
       releaseLock();
       return {
@@ -467,6 +531,7 @@ export async function runSelloScrape(
     log(`수집 대기 (모드=${fastMode ? 'fast(리뷰만)' : 'full(판매량까지)'}, 최대 ${timeoutMs / 1000}s)...`);
     const deadline = Date.now() + timeoutMs;
     let last = { total: 0, filled: 0 };
+    let rows: SelloScrapedRow[] = [];
 
     while (Date.now() < deadline) {
       if (options?.signal?.aborted) {
@@ -475,9 +540,13 @@ export async function runSelloScrape(
         return { ok: false, reason: 'other', error: '사용자가 중단함' };
       }
 
+      // 폴링과 최종 파싱이 같은 추출 결과를 본다 — 예전에는 서로 다른
+      // page.evaluate 를 돌려 원리상 다른 행 집합을 볼 수 있었다.
+      rows = await parseRows(page);
+
       if (fastMode) {
         // fast: review 채워진 행만 카운트. 리뷰는 페이지 렌더 시 즉시 박힘.
-        const status = await countWithReviews(page);
+        const status = countWithReviews(rows);
         if (status.total !== last.total || status.withReviews !== last.filled) {
           log(`total=${status.total} withReviews=${status.withReviews}`);
           last = { total: status.total, filled: status.withReviews };
@@ -487,8 +556,8 @@ export async function runSelloScrape(
           break;
         }
       } else {
-        // full: pv-month 까지 채워질 때까지 대기 (확장이 쿠팡 wing API 호출).
-        const status = await countFilled(page);
+        // full: 월 조회수까지 채워질 때까지 대기 (확장이 쿠팡 wing API 호출).
+        const status = countFilled(rows);
         if (status.total !== last.total || status.filled !== last.filled) {
           log(`total=${status.total} filled=${status.filled}`);
           last = status;
@@ -501,7 +570,53 @@ export async function runSelloScrape(
       await page.waitForTimeout(fastMode ? 1000 : 2000);
     }
 
-    const rows = await parseRows(page);
+    // 대기가 시간 초과로 끝났으면 마지막 폴링 결과는 한 주기(최대 2초)만큼 낡았다.
+    // 저장 직전에 한 번 더 읽어 화면과 파일이 어긋나지 않게 한다.
+    rows = await parseRows(page);
+    last = fastMode
+      ? (() => {
+          const s = countWithReviews(rows);
+          return { total: s.total, filled: s.withReviews };
+        })()
+      : countFilled(rows);
+
+    // ── 계약 검증 (헌법 P-1) ────────────────────────────
+    //
+    // 예전에는 대기 시간이 다 되면 그대로 아래로 내려가 0행이어도 ok:true 로
+    // 저장했고, 워커는 그걸 '완료'로 기록했다. 사이트 구조가 바뀌어 수집이
+    // 완전히 죽어도 화면에는 '데이터 없음'으로만 보였다.
+    //
+    // 이제 행 셀렉터가 계약을 지키는지 확인한다. 못 지키면 자동 치유를 한 번
+    // 시도하고(성공하면 다시 뽑는다), 그래도 안 되면 성공으로 기록하지 않는다.
+    const rowCheck = await checkSelectorOnPage(page, 'sello.row');
+    if (!rowCheck.ok) {
+      log(`⚠ 행 계약 미충족 (${rowCheck.reason}) — 치유를 시도합니다`);
+      const healed = await healSelectorOnPage(page, 'sello.row');
+      log(`   치유 결과: ${healed.status}/${healed.stage} — ${healed.reason}`);
+      if (healed.status === 'healed') {
+        rows = await parseRows(page);
+        last = fastMode
+          ? (() => {
+              const s = countWithReviews(rows);
+              return { total: s.total, filled: s.withReviews };
+            })()
+          : countFilled(rows);
+      } else {
+        await context.close().catch(() => {});
+        releaseLock();
+        return {
+          ok: false,
+          reason: 'contract',
+          error:
+            `셀록홈즈 결과표를 읽지 못했습니다 (${rowCheck.reason}). ` +
+            (healed.packageDir
+              ? `진단 스냅샷: ${healed.packageDir}. `
+              : '') +
+            'docs/CRAWL_REGISTRY.md 의 복구 절차를 따르세요.',
+        };
+      }
+    }
+
     log(`${rows.length}개 행 추출 (${fastMode ? 'withReviews' : 'filled'}=${last.filled})`);
 
     // ── JSON 저장 ──────────────────────────────────────
@@ -525,6 +640,15 @@ export async function runSelloScrape(
     const msg = e instanceof Error ? e.message : String(e);
     if (context) await context.close().catch(() => {});
     releaseLock();
+    // 셀렉터 계약 실패는 '알 수 없는 오류'가 아니라 '사이트가 바뀌었다' 는 신호다.
+    // 구분해서 돌려줘야 호출부가 재시도 대신 점검을 안내할 수 있다.
+    if (e instanceof CrawlContractError) {
+      return {
+        ok: false,
+        reason: 'contract',
+        error: `셀록홈즈 화면 구조가 바뀐 것으로 보입니다: ${msg}`,
+      };
+    }
     return {
       ok: false,
       reason: 'other',

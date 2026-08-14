@@ -91,7 +91,17 @@ async function main() {
   console.log(`[worker] 옵션: all=${opts.all}, limit=${opts.limit ?? '∞'}, maxAge=${opts.maxAgeDays}일`);
 
   // 1) 풀 로드
-  const pool = await loadKeywordPool();
+  //    파일이 없거나 깨졌으면 loadKeywordPool 이 던진다 (ADR-014).
+  //    예전에는 어떤 실패든 빈 배열이라 워커가 "0건 처리 완료" 로 정상 종료했다.
+  let pool: string[];
+  try {
+    pool = await loadKeywordPool();
+  } catch (err) {
+    console.error(
+      `[worker] 키워드 풀을 읽지 못했습니다: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    process.exit(1);
+  }
   console.log(`[worker] 키워드 풀: ${pool.length}개`);
   if (pool.length === 0) {
     console.error('[worker] 풀이 비어있음. data/season-keyword-pool.json 확인.');

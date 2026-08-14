@@ -40,6 +40,8 @@ import {
 const HTTP_BAD_REQUEST = 400;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_INTERNAL = 500;
+const HTTP_BAD_GATEWAY = 502;
+const MS_PER_HOUR = 3_600_000;
 
 const CACHE_TTL_HOURS = 24;
 
@@ -80,7 +82,7 @@ export async function GET(request: NextRequest) {
     const fetchInfo = await loadFetchInfo(keyword);
     const isCacheFresh =
       fetchInfo !== null &&
-      Date.now() - new Date(fetchInfo.fetched_at).getTime() < CACHE_TTL_HOURS * 3600_000;
+      Date.now() - new Date(fetchInfo.fetched_at).getTime() < CACHE_TTL_HOURS * MS_PER_HOUR;
 
     let dailyData: SCChartDataPoint[] = [];
     let fromCache = false;
@@ -126,8 +128,15 @@ export async function GET(request: NextRequest) {
     });
   } catch (err) {
     if (err instanceof SellochomesError) {
-      // 인증 만료 / 네트워크 실패 / 응답 깨짐
-      const status = err.code === 'auth_expired' ? HTTP_UNAUTHORIZED : HTTP_INTERNAL;
+      // 인증 만료 / 네트워크 실패 / 응답 깨짐 / 응답 구조 변경
+      // schema_mismatch 는 우리 서버 잘못이 아니라 대상 사이트가 바뀐 것이므로
+      // 500 이 아니라 502 로 구분해 알린다 (ADR-014).
+      const status =
+        err.code === 'auth_expired'
+          ? HTTP_UNAUTHORIZED
+          : err.code === 'schema_mismatch'
+            ? HTTP_BAD_GATEWAY
+            : HTTP_INTERNAL;
       return NextResponse.json<ErrorResponse>(
         { ok: false, error: err.message, code: err.code },
         { status },
@@ -225,14 +234,18 @@ async function upsertFetchLog(
     });
 }
 
+const MS_PER_MINUTE = 60_000;
+const MINUTES_PER_HOUR = 60;
+const HOURS_PER_DAY = 24;
+
 function getFreshness(fetchedAt: Date | string): string {
   const t = typeof fetchedAt === 'string' ? new Date(fetchedAt).getTime() : fetchedAt.getTime();
   const deltaMs = Date.now() - t;
-  const mins = Math.floor(deltaMs / 60_000);
+  const mins = Math.floor(deltaMs / MS_PER_MINUTE);
   if (mins < 1) return '방금 전';
-  if (mins < 60) return `${mins}분 전`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}시간 전`;
-  const days = Math.floor(hours / 24);
+  if (mins < MINUTES_PER_HOUR) return `${mins}분 전`;
+  const hours = Math.floor(mins / MINUTES_PER_HOUR);
+  if (hours < HOURS_PER_DAY) return `${hours}시간 전`;
+  const days = Math.floor(hours / HOURS_PER_DAY);
   return `${days}일 전`;
 }

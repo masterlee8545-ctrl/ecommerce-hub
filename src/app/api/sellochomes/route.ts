@@ -10,7 +10,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 import { requireCompanyContext } from '@/lib/auth/session';
 import {
-  fetchAllCategoryKeywords,
+  harvestCategoryKeywords,
   resolveCategoryPath,
   SellochomesError,
   type SCKeyword,
@@ -30,6 +30,21 @@ interface SuccessResponse {
   path: string;
   tree: Array<{ level: number; reps: string; items: Array<{ name: string; id: string }> }>;
   keywords: SCKeyword[] | null; //  path 있을 때만
+  /**
+   * 키워드를 다 가져왔는지 (ADR-014).
+   *
+   * 예전에는 절단된 결과도 그냥 배열로 나가서, 아래 단계 분석이 부분 데이터를
+   * 전체로 착각했다. 이제 못 채운 사실이 응답에 남는다 (P-1/P-3).
+   */
+  harvest: {
+    complete: boolean;
+    collected: number;
+    expected: number;
+    /** 'max_pages' 우리가 건 상한 · 'empty_page' 예상 밖 중단 */
+    truncatedBy: 'max_pages' | 'empty_page' | null;
+  } | null;
+  /** 못 채운 부분을 사람 말로. UI 는 이걸 ❓ 로 띄우면 된다 */
+  gaps: string[];
 }
 
 export async function GET(request: NextRequest) {
@@ -66,9 +81,26 @@ export async function GET(request: NextRequest) {
     // path 가 있고 실제 queryCategoryId 가 있으면 키워드 로드 (bootstrap 은 스킵)
     let keywords: SCKeyword[] | null = null;
     let categoryId: string | null = null;
+    let harvest: SuccessResponse['harvest'] = null;
+    const gaps: string[] = [];
+
     if (path.length > 0 && resolved.queryCategoryId) {
       categoryId = resolved.queryCategoryId;
-      keywords = await fetchAllCategoryKeywords(categoryId);
+      const result = await harvestCategoryKeywords(categoryId);
+      keywords = result.keywords;
+      harvest = {
+        complete: result.complete,
+        collected: result.keywords.length,
+        expected: result.expected,
+        truncatedBy: result.truncatedBy,
+      };
+      if (!result.complete) {
+        gaps.push(
+          result.truncatedBy === 'max_pages'
+            ? `키워드 ${result.keywords.length}/${result.expected}건만 가져왔습니다 — 한 번에 긁는 페이지 수 상한에 걸렸습니다.`
+            : `키워드 ${result.keywords.length}/${result.expected}건만 가져왔습니다 — 셀록홈즈가 중간에 빈 페이지를 돌려줬습니다. 확인이 필요합니다.`,
+        );
+      }
     }
 
     const body: SuccessResponse = {
@@ -77,6 +109,8 @@ export async function GET(request: NextRequest) {
       path,
       tree,
       keywords,
+      harvest,
+      gaps,
     };
     return NextResponse.json(body);
   } catch (err) {

@@ -77,7 +77,16 @@ export async function saveItemScoutTokenAction(form: FormData): Promise<SaveToke
     };
   }
 
-  await saveItemScoutToken(token);
+  // 금고 저장은 DB 쓰기라 실패할 수 있고, 실패하면 던진다 (ADR-014 D-5).
+  // 여기서 잡지 않으면 서버 액션이 그대로 터져 사용자는 원인 없는 에러만 본다.
+  try {
+    await saveItemScoutToken(token);
+  } catch (err) {
+    return {
+      ok: false,
+      error: `토큰 저장에 실패했습니다: ${err instanceof Error ? err.message : '알 수 없는 오류'}`,
+    };
+  }
 
   revalidatePath('/settings');
   revalidatePath('/research');

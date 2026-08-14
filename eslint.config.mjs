@@ -113,8 +113,18 @@ const config = [
     },
   },
   {
+    // CLI 스크립트는 결과를 표준출력으로 내는 게 존재 이유다. console.log 를 막으면
+    // 스크립트를 한 줄만 고쳐도 pre-commit(lint-staged --max-warnings 0)이 막힌다.
+    // 단위 변환 상수도 많아 매직넘버 경고를 끈다. 타입/헌법 룰은 그대로 적용된다.
+    files: ['scripts/**'],
+    rules: {
+      'no-console': 'off',
+      'no-magic-numbers': 'off',
+    },
+  },
+  {
     // 셀록홈즈 스크래퍼는 ad-hoc Playwright 스크립트 — 타입/린트 완화
-    // (page.evaluate 문자열, 수많은 console.log, 매직 넘버 등 lint 불가 패턴 다수)
+    // (수많은 console.log, 매직 넘버 등 lint 불가 패턴 다수)
     files: ['scripts/sello-scraper/**'],
     rules: {
       'no-console': 'off',

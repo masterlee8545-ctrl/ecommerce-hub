@@ -1,22 +1,47 @@
 /**
  * 아이템 스카우트 API 클라이언트 (서버 전용)
  *
- * 헌법: CLAUDE.md §1 P-2 (실패 시 명시 에러), §1 P-9 (한국어)
+ * 헌법: CLAUDE.md §1 P-1 (빈 결과 은폐 금지), §1 P-2 (실패 시 명시 에러), §1 P-9 (한국어)
+ * ADR: docs/ADR-014.md — 자격증명 금고 + 응답 계약
  *
  * 역할:
  * - 아이템스카우트 REST API 호출 (i_token 쿠키 인증)
  * - 카테고리 목록, 카테고리별 키워드, 트렌딩 키워드 조회
  * - 서버에서만 실행 — 토큰이 클라이언트에 노출되지 않음
  *
- * 토큰 우선순위:
- * 1. 런타임 메모리 (설정 페이지에서 입력한 값)
- * 2. .env.local ITEMSCOUT_TOKEN
+ * 토큰 보관은 금고(`@/lib/crawl` vault)가 맡는다:
+ *   메모리 → DB(system_settings) → 파일(.data) → 환경변수
+ *
+ * 예전에는 DB 단계가 없어 Vercel 인스턴스마다 토큰이 따로 놀았다 (설정 화면에서
+ * 저장해도 다른 인스턴스에서는 안 보였다). 금고로 옮기면서 셀록홈즈 쿠키와
+ * 같은 규칙을 쓰게 됐다.
  */
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { CrawlError, isCrawlError } from '@/lib/crawl/errors';
+import { crawlFetchJson, type HeaderProfile } from '@/lib/crawl/fetch';
+import {
+  clearCredentialCache,
+  getCredential,
+  hasCredential,
+  saveCredential,
+} from '@/lib/crawl/vault';
 
 const BASE_URL = 'https://api.itemscout.io/api';
-const TOKEN_FILE_PATH = join(process.cwd(), '.data', 'itemscout-token.json');
+
+/**
+ * 아이템스카우트 화면에서 나가는 요청처럼 보이게 하는 공통 헤더 성격.
+ *
+ * 예전 코드는 Cookie 만 보냈다. 여기에 헤더를 얹으면서도 **앞뒤가 맞는 조합**만 쓴다:
+ * - API 가 `api.itemscout.io`(다른 서브도메인)라 `Sec-Fetch-Site` 는 `same-site` 다
+ * - 브라우저는 GET 에 `Origin` 을 붙이지 않으므로 origin 은 비운다
+ * - `x-requested-with` 는 이 사이트가 쓰지 않던 헤더라 넣지 않는다
+ */
+const IS_PROFILE: HeaderProfile = {
+  origin: null,
+  referer: 'https://itemscout.io/',
+  json: false,
+  xhr: false,
+  secFetchSite: 'same-site',
+};
 
 // ─────────────────────────────────────────────────────────
 // 타입 — 실제 API 응답 구조에 맞춤
@@ -103,104 +128,60 @@ export interface ISCategoryWithPreview extends ISCategory {
 }
 
 // ─────────────────────────────────────────────────────────
-// 토큰 관리
+// 토큰 관리 (금고 위임)
 // ─────────────────────────────────────────────────────────
 
-// 런타임 메모리 캐시 (Hot-reload 대비 globalThis)
-declare global {
-  var __itemscoutToken: string | undefined;
-}
-
-/** 파일에서 저장된 토큰을 읽는다 (없으면 null). */
-async function readSavedToken(): Promise<string | null> {
-  try {
-    const raw = await readFile(TOKEN_FILE_PATH, 'utf-8');
-    const parsed = JSON.parse(raw) as { token?: string };
-    return parsed.token ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * 토큰 획득 우선순위:
- * 1. globalThis 메모리 (설정 페이지에서 입력)
- * 2. 파일 (.data/itemscout-token.json)
- * 3. 환경변수 (ITEMSCOUT_TOKEN)
- */
-async function getToken(): Promise<string> {
-  // 1. 메모리
-  if (globalThis.__itemscoutToken) return globalThis.__itemscoutToken;
-
-  // 2. 파일
-  const saved = await readSavedToken();
-  if (saved) {
-    globalThis.__itemscoutToken = saved;
-    return saved;
-  }
-
-  // 3. 환경변수
-  const env = process.env['ITEMSCOUT_TOKEN'];
-  if (env) return env;
-
-  throw new Error(
-    '아이템스카우트 토큰이 설정되지 않았습니다.\n' +
-      '설정 → 아이템스카우트 연결에서 토큰을 입력하세요.',
-  );
-}
-
-/**
- * 토큰을 저장한다 (메모리 + 파일).
- * Vercel 서버리스는 read-only 파일시스템 → 파일 쓰기 실패해도 globalThis 는 유지됨.
- * 영구 저장은 env 변수(ITEMSCOUT_TOKEN) 업데이트 또는 DB 저장으로 해야 함 (추후 개선).
- */
+/** 토큰을 저장한다. DB 저장이 실패하면 던진다 (조용히 넘기면 다른 인스턴스가 옛 값을 쓴다). */
 export async function saveItemScoutToken(token: string): Promise<void> {
-  globalThis.__itemscoutToken = token;
-  try {
-    const dir = join(process.cwd(), '.data');
-    await mkdir(dir, { recursive: true });
-    await writeFile(TOKEN_FILE_PATH, JSON.stringify({ token }, null, 2), 'utf-8');
-  } catch (err) {
-    // 읽기전용 FS(예: Vercel) 에선 파일 저장 불가 — 에러 로그만 남기고 조용히 무시
-    console.warn('[saveItemScoutToken] 파일 저장 실패 (메모리에는 유지됨):', err instanceof Error ? err.message : err);
-  }
+  await saveCredential('itemscout_token', token);
 }
 
 /** 현재 토큰이 설정되어 있는지 확인. */
 export async function hasItemScoutToken(): Promise<boolean> {
-  try {
-    await getToken();
-    return true;
-  } catch {
-    return false;
-  }
+  return hasCredential('itemscout_token');
 }
 
 // ─────────────────────────────────────────────────────────
 // 내부 API 호출
 // ─────────────────────────────────────────────────────────
 
+/**
+ * 아이템스카우트 API 호출.
+ *
+ * @param path       `category/...` 같은 경로
+ * @param contractId 응답 모양을 검증할 레지스트리 항목 id
+ *
+ * 401/403 이면 `crawlFetchJson` 이 `session_expired` 로 던진다. 그때 금고 캐시를
+ * 비워, 사용자가 새 토큰을 넣자마자 반영되게 한다 — 예전에는 만료 분기 자체가
+ * 없어 토큰 만료와 서버 장애가 같은 에러로 뭉개졌다.
+ */
 async function fetchIS<T>(
   path: string,
-  options?: RequestInit,
+  contractId: string,
+  options?: { method?: 'GET' | 'POST'; headers?: Record<string, string> },
 ): Promise<T> {
-  const token = await getToken();
-  const url = `${BASE_URL}/${path}`;
-
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      Cookie: `i_token=${token}`,
-      ...options?.headers,
-    },
-    cache: 'no-store', // 응답 2MB+ 이면 Next 캐시 에러 → 캐시 끔
-  });
-
-  if (!res.ok) {
-    throw new Error(`[itemscout] API 오류 ${res.status}: ${url}`);
+  const token = await getCredential('itemscout_token');
+  try {
+    return await crawlFetchJson<T>(`${BASE_URL}/${path}`, {
+      source: 'itemscout',
+      endpoint: path,
+      profile: IS_PROFILE,
+      cookie: `i_token=${token}`,
+      contractId,
+      ...(options?.method ? { method: options.method } : {}),
+      ...(options?.headers ? { headers: options.headers } : {}),
+    });
+  } catch (err) {
+    if (isCrawlError(err) && err.code === 'session_expired') {
+      clearCredentialCache('itemscout_token');
+    }
+    throw err;
   }
+}
 
-  return res.json() as Promise<T>;
+/** 응답이 기대한 모양이 아닐 때. 빈 배열로 감추지 않는다 (P-1). */
+function schemaMismatch(endpoint: string, reason: string): CrawlError {
+  return new CrawlError('schema_mismatch', { source: 'itemscout', endpoint, reason });
 }
 
 // ─────────────────────────────────────────────────────────
@@ -213,7 +194,11 @@ async function fetchIS<T>(
 export async function getCoupangTopCategories(): Promise<ISCategory[]> {
   const res = await fetchIS<{ status: string; data: ISCategory[][] }>(
     'category/coupang_categories_map',
+    'itemscout.categories_map',
   );
+  if (!Array.isArray(res.data)) {
+    throw schemaMismatch('category/coupang_categories_map', 'data 가 배열이 아닙니다');
+  }
   const all = res.data.flat();
   return all.filter((c) => c.lv === 1);
 }
@@ -253,10 +238,17 @@ export async function getCoupangTopCategoriesWithPreview(): Promise<ISCategoryWi
 export async function getSubcategories(
   internalId: number,
 ): Promise<ISSubcategory[]> {
+  const endpoint = `category/{id}/subcategories`;
   const res = await fetchIS<{ data: ISSubcategory[] }>(
     `category/${internalId}/subcategories`,
+    'itemscout.subcategories',
   );
-  return Array.isArray(res.data) ? res.data : [];
+  // 예전에는 배열이 아니면 빈 배열을 돌려줬다. 그러면 "하위 카테고리가 없음"과
+  // "응답 구조가 바뀜"이 화면에서 똑같아진다 (P-1 위반).
+  if (!Array.isArray(res.data)) {
+    throw schemaMismatch(endpoint, 'data 가 배열이 아닙니다');
+  }
+  return res.data;
 }
 
 /**
@@ -303,8 +295,10 @@ export async function getCategoryKeywords(
     };
   }
 
+  const endpoint = 'category/{id}/data';
   const res = await fetchIS<RawResponse>(
     `category/${internalId}/data`,
+    'itemscout.category_data',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -312,7 +306,13 @@ export async function getCategoryKeywords(
   );
 
   const keywordMap = res.data?.data;
-  if (!keywordMap || typeof keywordMap !== 'object') return [];
+  // `data.data` 가 null 이면 아이템스카우트가 아직 이 카테고리를 집계하지 않은
+  // 정상 상태다 (renewStatus 로 표현된다). 반면 객체가 아닌 다른 타입이면
+  // 응답 구조가 바뀐 것이므로 구분해서 던진다.
+  if (keywordMap === null || keywordMap === undefined) return [];
+  if (typeof keywordMap !== 'object' || Array.isArray(keywordMap)) {
+    throw schemaMismatch(endpoint, 'data.data 가 키워드 맵이 아닙니다');
+  }
 
   // 중첩 coupang 객체 → 플랫 필드로 정규화
   return Object.values(keywordMap).map((raw): ISKeyword => ({
@@ -339,6 +339,10 @@ export async function getCategoryKeywords(
 export async function getTrendingKeywords(): Promise<ISTrendKeyword[]> {
   const res = await fetchIS<{ data: ISTrendKeyword[] }>(
     'v2/keyword/trend',
+    'itemscout.keyword_trend',
   );
-  return Array.isArray(res.data) ? res.data : [];
+  if (!Array.isArray(res.data)) {
+    throw schemaMismatch('v2/keyword/trend', 'data 가 배열이 아닙니다');
+  }
+  return res.data;
 }

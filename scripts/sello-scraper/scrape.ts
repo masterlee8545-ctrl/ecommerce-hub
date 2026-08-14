@@ -20,6 +20,20 @@ import path from 'node:path';
 
 import { chromium, type Page } from 'playwright';
 
+// 크롤링 커널을 그대로 쓴다 — 예전에는 이 파일과 src/lib/sello-scraper/run-scrape.ts 에
+// 같은 파서가 복제돼 있어 이미 서로 어긋나 있었다 (ADR-014).
+// `@/` 별칭이 아니라 상대 경로로 가져온다 — 이 스크립트는 tsx 가 직접 돌린다.
+import {
+  checkSelectorOnPage,
+  clickByContractOrThrow,
+  extractRowsFromPage,
+  fillByRegistry,
+  healSelectorOnPage,
+  waitForContract,
+  type ExtractedRow,
+  type RowExtractionPlan,
+} from '../../src/lib/crawl/page.js';
+
 import { ROOT, loadExtensionConfig } from './lib.js';
 
 const OUTPUT_DIR = path.join(ROOT, 'data', 'sello-scrape');
@@ -59,54 +73,64 @@ interface CollectStatus {
   filled: number;
 }
 
-// page.evaluate 내부에서 named 화살표 함수/const 사용하면 tsx/esbuild가 __name() 래퍼 삽입 → browser에 __name 없음 → ReferenceError
-// 해결: 모든 로직 인라인화 (helper 없음)
-async function parseRows(page: Page): Promise<ScrapedRow[]> {
-  return page.evaluate(`(() => {
-    const rows = Array.from(document.querySelectorAll("ul.td[data-rank]"));
-    return rows.map(function (row) {
-      function t(sel) {
-        const el = row.querySelector(sel);
-        return el ? (el.textContent || "").trim() : null;
-      }
-      function attr(sel, name) {
-        const el = row.querySelector(sel);
-        return el ? el.getAttribute(name) : null;
-      }
-      return {
-        rank: row.getAttribute("data-rank"),
-        coupangId: row.getAttribute("data-coupangid"),
-        itemId: row.getAttribute("data-itemid"),
-        sourcingMonthlyAmount: row.getAttribute("data-sourcing-monthly-amount"),
-        name: t("li.name .goods-name") || t("li.name"),
-        price: t("li.price"),
-        review: t("li.review .num"),
-        pvMonth: t("li.pv-month .num"),
-        sales: t("li.sales .num"),
-        salesMonth: t("li.sales-month .num"),
-        cvMonth: t("li.cv-month .num"),
-        sourcingPrice: t("li.sourcing-price"),
-        expectedAmount: t("li.expected-amount"),
-        expectedPriceRate: t("li.expected-price-rate"),
-        imageUrl: attr("li.name .prd-img img", "src"),
-        productUrl: attr("li.name .goods-name a", "href"),
-        isRocketDelivery: !!row.querySelector("li.del.rocket"),
-      };
-    });
-  })()`);
+// 셀렉터는 src/lib/crawl/selectors.json 에 계약과 함께 있다. 이 파일에는 없다.
+// 파싱도 브라우저가 아니라 Node 에서 한다 — page.evaluate 안에 로직을 두면
+// tsx/esbuild 가 __name() 래퍼를 넣어 브라우저에서 ReferenceError 가 나므로,
+// 예전엔 타입 없는 문자열로 적어야 했다. 그 제약이 사라졌다.
+const SELLO_ROW_PLAN: RowExtractionPlan = {
+  rowSelectorId: 'sello.row',
+  rowAttrs: ['data-rank', 'data-coupangid', 'data-itemid', 'data-sourcing-monthly-amount'],
+  fields: {
+    name: { selectorId: 'sello.row_name' },
+    price: { selectorId: 'sello.row_price' },
+    review: { selectorId: 'sello.row_review' },
+    pvMonth: { selectorId: 'sello.row_pv_month' },
+    sales: { selectorId: 'sello.row_sales' },
+    salesMonth: { selectorId: 'sello.row_sales_month' },
+    cvMonth: { selectorId: 'sello.row_cv_month' },
+    sourcingPrice: { selectorId: 'sello.row_sourcing_price' },
+    expectedAmount: { selectorId: 'sello.row_expected_amount' },
+    expectedPriceRate: { selectorId: 'sello.row_expected_price_rate' },
+    imageUrl: { selectorId: 'sello.row_image', attr: 'src' },
+    productUrl: { selectorId: 'sello.row_link', attr: 'href' },
+  },
+  flags: { isRocketDelivery: 'sello.row_rocket' },
+};
+
+function toScrapedRow(row: ExtractedRow): ScrapedRow {
+  return {
+    rank: row.attrs['data-rank'] ?? null,
+    coupangId: row.attrs['data-coupangid'] ?? null,
+    itemId: row.attrs['data-itemid'] ?? null,
+    sourcingMonthlyAmount: row.attrs['data-sourcing-monthly-amount'] ?? null,
+    name: row.fields['name'] ?? null,
+    price: row.fields['price'] ?? null,
+    review: row.fields['review'] ?? null,
+    pvMonth: row.fields['pvMonth'] ?? null,
+    sales: row.fields['sales'] ?? null,
+    salesMonth: row.fields['salesMonth'] ?? null,
+    cvMonth: row.fields['cvMonth'] ?? null,
+    sourcingPrice: row.fields['sourcingPrice'] ?? null,
+    expectedAmount: row.fields['expectedAmount'] ?? null,
+    expectedPriceRate: row.fields['expectedPriceRate'] ?? null,
+    imageUrl: row.fields['imageUrl'] ?? null,
+    productUrl: row.fields['productUrl'] ?? null,
+    isRocketDelivery: row.flags['isRocketDelivery'] === true,
+  };
 }
 
-async function countFilled(page: Page): Promise<CollectStatus> {
-  return page.evaluate(`(() => {
-    const rows = Array.from(document.querySelectorAll("ul.td[data-rank]"));
-    let filled = 0;
-    for (let i = 0; i < rows.length; i++) {
-      const num = rows[i].querySelector("li.pv-month .num");
-      const raw = num ? (num.textContent || "").trim() : "";
-      if (raw && /\\d/.test(raw) && raw !== "-" && raw !== "0") filled += 1;
-    }
-    return { total: rows.length, filled: filled };
-  })()`);
+async function parseRows(page: Page): Promise<ScrapedRow[]> {
+  const rows = await extractRowsFromPage(page, SELLO_ROW_PLAN);
+  return rows.map(toScrapedRow);
+}
+
+function countFilled(rows: ScrapedRow[]): CollectStatus {
+  let filled = 0;
+  for (const row of rows) {
+    const raw = (row.pvMonth ?? '').trim();
+    if (raw && /\d/.test(raw) && raw !== '-' && raw !== '0') filled += 1;
+  }
+  return { total: rows.length, filled };
 }
 
 async function debugSnapshot(page: Page, label: string): Promise<void> {
@@ -382,43 +406,33 @@ async function run(): Promise<void> {
   })()`);
   console.log(`[ui-probe] ${JSON.stringify(uiProbe, null, 2)}`);
 
-  await page.waitForSelector('input.search-input', { timeout: 15_000 });
-  await page.fill('input.search-input', KEYWORD);
+  await waitForContract(page, 'sello.search_input', {
+    timeoutMs: 15_000,
+    onProgress: (m) => console.log(`[crawl] ${m}`),
+  });
+  await fillByRegistry(page, 'sello.search_input', KEYWORD);
 
-  const pagePicked = await page.evaluate(`(() => {
-    const btns = Array.from(document.querySelectorAll('button'));
-    for (const b of btns) {
-      if ((b.textContent || '').trim() === '선택') { b.click(); return 'opened'; }
-    }
-    return 'no-button';
-  })()`);
-  console.log(`[page-select] 드롭다운 상태=${pagePicked}`);
+  // 클릭 결과를 확인한다 — 예전에는 'no-button'/'not-found' 를 로그로만 찍고
+  // 그대로 진행해, 범위를 못 고른 채 엉뚱한 결과를 수집할 수 있었다.
+  // 드롭다운은 원래 in-page element.click() 이었으므로 그 방식을 유지한다.
+  await clickByContractOrThrow(page, 'sello.page_select_trigger', { programmatic: true });
+  console.log('[page-select] 드롭다운 열기 완료');
   await page.waitForTimeout(1000);
 
-  const pageOption = await page.evaluate(`(() => {
-    const lis = Array.from(document.querySelectorAll('li'));
-    for (const li of lis) {
-      const t = (li.textContent || '').trim();
-      if (t === '1 페이지 상품분석') { li.click(); return 'clicked'; }
-    }
-    return 'not-found';
-  })()`);
-  console.log(`[page-select] "1 페이지 상품분석" 클릭=${pageOption}`);
+  await clickByContractOrThrow(page, 'sello.page_select_option', { programmatic: true });
+  console.log('[page-select] "1 페이지 상품분석" 클릭 완료');
   await page.waitForTimeout(500);
 
-  await page.click('button.search-icon');
+  await clickByContractOrThrow(page, 'sello.search_button');
   console.log(`[input] "${KEYWORD}" 검색 트리거 (1페이지)`);
 
   await page.waitForTimeout(3000);
-  const hasExtensionModal = await page.evaluate(() => {
-    const body = document.body.innerText;
-    return body.includes('익스텐션 설치') || body.includes('확장 프로그램 설치');
-  });
-  if (hasExtensionModal) {
+  const extNotice = await checkSelectorOnPage(page, 'sello.extension_missing_notice');
+  if (extNotice.ok) {
     const shot = path.join(OUTPUT_DIR, `_ext-missing-${Date.now()}.png`);
     await page.screenshot({ path: shot, fullPage: true });
     throw new Error(
-      `익스텐션 설치 모달 감지됨 — 셀러라이프 확장 활성화 확인. 스크린샷: ${shot}`,
+      `익스텐션 설치 안내 감지됨 — 셀러라이프 확장 활성화 확인. 스크린샷: ${shot}`,
     );
   }
 
@@ -429,9 +443,12 @@ async function run(): Promise<void> {
   );
   const deadline = Date.now() + COLLECTION_TIMEOUT_MS;
   let last: CollectStatus = { total: 0, filled: 0 };
+  let rows: ScrapedRow[] = [];
 
   while (Date.now() < deadline) {
-    const status = (await countFilled(page)) as CollectStatus;
+    // 폴링과 최종 파싱이 같은 추출 결과를 본다
+    rows = await parseRows(page);
+    const status = countFilled(rows);
     if (status.total !== last.total || status.filled !== last.filled) {
       console.log(`[wait] total=${status.total} filled=${status.filled}`);
       last = status;
@@ -450,7 +467,28 @@ async function run(): Promise<void> {
     await debugSnapshot(page, 'timeout');
   }
 
-  const rows = (await parseRows(page)) as ScrapedRow[];
+  // 대기가 시간 초과로 끝났으면 마지막 폴링 결과가 한 주기만큼 낡았다 — 다시 읽는다.
+  rows = await parseRows(page);
+  last = countFilled(rows);
+
+  // 행 셀렉터가 아직 맞는지 확인. 깨졌으면 치유를 시도하고, 실패하면 던진다.
+  const rowCheck = await checkSelectorOnPage(page, 'sello.row');
+  if (!rowCheck.ok) {
+    console.warn(`[crawl] 행 계약 미충족 (${rowCheck.reason}) — 치유 시도`);
+    const healed = await healSelectorOnPage(page, 'sello.row');
+    console.warn(`[crawl] 치유 결과: ${healed.status}/${healed.stage} — ${healed.reason}`);
+    if (healed.status !== 'healed') {
+      await debugSnapshot(page, 'contract-failed');
+      throw new Error(
+        `셀록홈즈 결과표를 읽지 못했습니다 (${rowCheck.reason}). ` +
+          (healed.packageDir ? `진단 스냅샷: ${healed.packageDir}. ` : '') +
+          'docs/CRAWL_REGISTRY.md 의 복구 절차를 따르세요.',
+      );
+    }
+    rows = await parseRows(page);
+    last = countFilled(rows);
+  }
+
   console.log(`[parse] ${rows.length}개 행 추출`);
 
   const rowSample = await page
