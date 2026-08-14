@@ -87,14 +87,27 @@ const registryFileSchema = z.object({
 /** 깨진 이력 줄을 경고에 실을 때 보여 줄 길이. */
 const HISTORY_PREVIEW_CHARS = 80;
 
-const OVERLAY_DIR = path.join(process.cwd(), 'data', 'crawl-registry');
-const OVERLAY_PATH = path.join(OVERLAY_DIR, 'selectors.local.json');
-const HISTORY_PATH = path.join(OVERLAY_DIR, 'history.jsonl');
+/**
+ * 경로는 **쓸 때마다 계산한다.** 모듈 로드 시점에 `process.cwd()` 를 굳혀 두면,
+ * 그 뒤 cwd 를 옮겨도 옛 경로에 계속 쓴다.
+ *
+ * 실제로 이걸로 사고가 났다: 연기 점검(`npm run crawl:smoke`)이 저장소를 건드리지
+ * 않으려고 임시 폴더로 cwd 를 옮겼는데, 경로가 이미 굳어 있어 **저장소의 레지스트리를
+ * 가짜 셀렉터로 덮어썼다.** 지연 계산이면 애초에 생기지 않는 문제다.
+ */
+function overlayDir(): string {
+  return path.join(process.cwd(), 'data', 'crawl-registry');
+}
 
 /** 치유 결과를 덮어쓸 파일 경로 — 안내 메시지에 쓴다. */
-export const overlayPath = OVERLAY_PATH;
+export function overlayPath(): string {
+  return path.join(overlayDir(), 'selectors.local.json');
+}
+
 /** 변경 이력 파일 경로. */
-export const historyPath = HISTORY_PATH;
+export function historyPath(): string {
+  return path.join(overlayDir(), 'history.jsonl');
+}
 
 // ─────────────────────────────────────────────────────────
 // 에러
@@ -134,7 +147,7 @@ function parseFile(raw: unknown, source: string): SelectorRegistryFile {
 async function readOverlay(): Promise<Partial<Record<string, SelectorEntry>>> {
   let text: string;
   try {
-    text = await readFile(OVERLAY_PATH, 'utf-8');
+    text = await readFile(overlayPath(), 'utf-8');
   } catch {
     return {}; // 덮개가 없는 게 정상 상태다 (치유가 한 번도 없었음)
   }
@@ -143,11 +156,11 @@ async function readOverlay(): Promise<Partial<Record<string, SelectorEntry>>> {
     raw = JSON.parse(text);
   } catch (err) {
     throw new RegistryError(
-      `${OVERLAY_PATH} 이 올바른 JSON 이 아닙니다: ${err instanceof Error ? err.message : String(err)}`,
+      `${overlayPath()} 이 올바른 JSON 이 아닙니다: ${err instanceof Error ? err.message : String(err)}`,
       'invalid_file',
     );
   }
-  return parseFile(raw, OVERLAY_PATH).selectors;
+  return parseFile(raw, overlayPath()).selectors;
 }
 
 /**
@@ -212,12 +225,12 @@ export async function selectorIdsByPrefix(prefix: string): Promise<string[]> {
 
 async function writeOverlay(selectors: Record<string, SelectorEntry>): Promise<void> {
   try {
-    await mkdir(OVERLAY_DIR, { recursive: true });
+    await mkdir(overlayDir(), { recursive: true });
     const body: SelectorRegistryFile = { version: 1, selectors };
-    await writeFile(OVERLAY_PATH, `${JSON.stringify(body, null, 2)}\n`, 'utf-8');
+    await writeFile(overlayPath(), `${JSON.stringify(body, null, 2)}\n`, 'utf-8');
   } catch (err) {
     throw new RegistryError(
-      `치유 결과를 저장할 수 없습니다 (${OVERLAY_PATH}). ` +
+      `치유 결과를 저장할 수 없습니다 (${overlayPath()}). ` +
         '읽기 전용 파일시스템(Vercel 등)에서는 치유가 불가능합니다. ' +
         `로컬 워커에서 실행하세요. 원인: ${err instanceof Error ? err.message : String(err)}`,
       'read_only',
@@ -227,13 +240,13 @@ async function writeOverlay(selectors: Record<string, SelectorEntry>): Promise<v
 
 async function appendHistory(record: HistoryRecord): Promise<void> {
   try {
-    await mkdir(OVERLAY_DIR, { recursive: true });
-    await appendFile(HISTORY_PATH, `${JSON.stringify(record)}\n`, 'utf-8');
+    await mkdir(overlayDir(), { recursive: true });
+    await appendFile(historyPath(), `${JSON.stringify(record)}\n`, 'utf-8');
   } catch (err) {
     // 이력은 남기지 못해도 승격 자체는 이미 끝났다. 조용히 삼키면
     // 되돌릴 근거가 사라진 걸 아무도 모르므로 경고는 반드시 남긴다.
     console.error(
-      `[crawl/registry] 이력 기록 실패 (${HISTORY_PATH}): ${err instanceof Error ? err.message : String(err)}`,
+      `[crawl/registry] 이력 기록 실패 (${historyPath()}): ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
@@ -300,7 +313,7 @@ export async function promote(
 export async function readHistory(): Promise<HistoryRecord[]> {
   let text: string;
   try {
-    text = await readFile(HISTORY_PATH, 'utf-8');
+    text = await readFile(historyPath(), 'utf-8');
   } catch {
     return [];
   }

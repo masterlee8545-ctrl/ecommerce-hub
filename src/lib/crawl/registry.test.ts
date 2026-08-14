@@ -5,9 +5,20 @@
  * "레지스트리 파일 자체가 말이 되는가"다. 계약이 조용히 비어 버리거나
  * 존재하지 않는 컨테이너를 가리키면 자동 치유의 근거가 무너진다.
  */
+import fs from 'node:fs';
+import os from 'node:os';
+
 import { describe, expect, it } from 'vitest';
 
-import { findRevertTarget, getEntry, loadRegistry, RegistryError, selectorIds } from './registry';
+import {
+  findRevertTarget,
+  getEntry,
+  historyPath,
+  loadRegistry,
+  overlayPath,
+  RegistryError,
+  selectorIds,
+} from './registry';
 
 import type { CssContract, HistoryRecord, JsonContract } from './types';
 
@@ -76,6 +87,27 @@ describe('레지스트리 파일', () => {
     for (const id of await selectorIds()) {
       expect(id, `${id}`).toMatch(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/);
     }
+  });
+});
+
+describe('덮개 경로', () => {
+  it('모듈 로드 시점이 아니라 부를 때마다 cwd 로 계산한다', () => {
+    // 회귀 방지: 경로를 모듈 상수로 굳혀 두면, cwd 를 옮긴 뒤에도 옛 경로에 쓴다.
+    // 실제로 연기 점검이 저장소를 건드리지 않으려고 임시 폴더로 옮겼는데,
+    // 경로가 굳어 있어 **저장소의 레지스트리를 가짜 셀렉터로 덮어썼다.**
+    const original = process.cwd();
+    const before = overlayPath();
+    try {
+      process.chdir(os.tmpdir());
+      const after = overlayPath();
+      expect(after).not.toBe(before);
+      expect(after.startsWith(fs.realpathSync(os.tmpdir()))
+        || after.startsWith(os.tmpdir())).toBe(true);
+      expect(historyPath()).toContain('crawl-registry');
+    } finally {
+      process.chdir(original);
+    }
+    expect(overlayPath()).toBe(before);
   });
 });
 

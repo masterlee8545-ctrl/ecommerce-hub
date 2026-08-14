@@ -28,6 +28,7 @@
     "crawl:history": "tsx scripts/crawl-registry.ts history",
     "crawl:revert": "tsx scripts/crawl-registry.ts revert",
     "crawl:adopt": "tsx scripts/crawl-registry.ts adopt",
+    "crawl:smoke": "tsx scripts/crawl-smoke.ts",
     "gc": "npm run lint && npm run typecheck && npm run test && npm run build",
     "prepare": "husky"
   },

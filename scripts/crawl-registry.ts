@@ -37,7 +37,7 @@ async function cmdList(): Promise<void> {
   const registry = await loadRegistry();
   const ids = await selectorIds();
   out(`레지스트리 v${registry.version} — 셀렉터 ${ids.length}건`);
-  out(`덮개 파일: ${overlayPath}`);
+  out(`덮개 파일: ${overlayPath()}`);
   out('');
   for (const id of ids) {
     const entry = registry.selectors[id];
@@ -55,7 +55,7 @@ async function cmdList(): Promise<void> {
 
 async function cmdHistory(): Promise<void> {
   const history = await readHistory();
-  out(`이력 파일: ${historyPath}`);
+  out(`이력 파일: ${historyPath()}`);
   if (history.length === 0) {
     out('아직 기록된 변경이 없습니다.');
     return;
@@ -123,7 +123,7 @@ async function cmdAdopt(
     return;
   }
   out(`채택: ${result.adopted}  (${result.matches}건 매칭)`);
-  out(`덮개 파일에 기록했습니다: ${overlayPath}`);
+  out(`덮개 파일에 기록했습니다: ${overlayPath()}`);
   out('확정하려면 이 값을 src/lib/crawl/selectors.json 에 반영해 커밋하세요.');
 }
 

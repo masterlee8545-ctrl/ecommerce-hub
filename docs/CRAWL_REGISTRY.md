@@ -219,9 +219,35 @@ Node 에는 그에 직접 대응하는 순수 JS 수단이 없다. 그런 수준
 ```bash
 npm run crawl:list        # 등록된 셀렉터와 계약 보기
 npm run crawl:history     # 언제 무엇이 어떻게 바뀌었나
-npm run crawl:revert      # 최근 치유 되돌리기
+npm run crawl:revert      # 최근 변경 되돌리기 (여러 번 누르면 한 단계씩 더 거슬러 간다)
 npm run crawl:adopt -- <셀렉터id> <스냅샷폴더> <응답파일|JSON>
 
-npm run sello:scrape -- <키워드>   # 실제 수집 (로컬 Chrome 필요)
-npm test -- src/lib/crawl          # 커널 테스트만 (브라우저 불필요)
+npm run crawl:smoke       # 커널 통합 점검 (진짜 브라우저, 셀록홈즈 계정 불필요)
+npm test -- src/lib/crawl # 커널 단위 테스트 (브라우저 불필요)
+
+npm run sello:scrape -- <키워드>   # 실제 수집 (아래 전제 조건 필요)
 ```
+
+## 10. 무엇을 어디까지 검증할 수 있나
+
+| 명령 | 필요한 것 | 확인해 주는 것 |
+|---|---|---|
+| `npm test` | 없음 | 계약 판정·역추출 알고리즘·추출·리포트 |
+| `npm run crawl:smoke` | Chrome | **Playwright 어댑터 경로 전체** — 화면 읽기 → 계약 → 클릭 → 추출 → 4단계 자동치유 |
+| `npm run sello:scrape` | 아래 4가지 | 우리 셀렉터가 **셀록홈즈 실제 화면**과 맞는지 |
+
+`crawl:smoke` 는 구조만 흉내 낸 가짜 화면을 씁니다. 네트워크에 나가지 않고, 레지스트리도
+임시 폴더에만 씁니다 — 저장소의 셀렉터를 건드리지 않습니다.
+
+### `sello:scrape` 전제 조건 (하나라도 없으면 못 돕니다)
+
+1. **Windows + Chrome** (`process.platform === 'win32'` 체크가 있습니다)
+2. **`.env.local` 의 `SELLO_EXTENSION_PATH`** — 셀러라이프 확장 압축해제 경로.
+   그 폴더에 `manifest.json` 이 실제로 있어야 합니다
+3. **셀러라이프 Chrome 확장 설치** — 판매량·조회수 칸을 채우는 주체입니다.
+   없으면 화면에 "익스텐션 설치" 안내가 뜨고 수집이 중단됩니다
+4. **`C:\sello-user-data` 프로필에 셀록홈즈 로그인** — 최초 1회 사람이 직접 로그인해야 합니다
+   (구글/카카오 OAuth 라 자동화 불가)
+
+추가로 **실행 전 모든 Chrome 창을 닫아야** 합니다 (프로필 락 충돌):
+`taskkill //F //IM chrome.exe`

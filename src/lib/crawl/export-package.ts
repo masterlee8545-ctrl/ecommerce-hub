@@ -18,12 +18,18 @@ import path from 'node:path';
 
 import type { SelectorEntry } from './types';
 
-const SNAPSHOT_ROOT = path.join(process.cwd(), 'data', 'crawl-snapshots');
 /** 셀렉터 하나당 남겨 둘 스냅샷 개수. 넘으면 오래된 것부터 지운다 */
 const KEEP_PER_SELECTOR = 3;
 
-/** 스냅샷 루트 경로 — 안내 메시지에 쓴다. */
-export const snapshotRoot = SNAPSHOT_ROOT;
+/**
+ * 스냅샷 루트 경로 — 안내 메시지에도 쓴다.
+ *
+ * 모듈 로드 시점에 `process.cwd()` 를 굳히지 않는다. 굳혀 두면 cwd 를 옮긴 뒤에도
+ * 옛 경로에 쓴다 (`registry.ts` 의 같은 주석 참조 — 실제로 사고가 났던 지점이다).
+ */
+export function snapshotRoot(): string {
+  return path.join(process.cwd(), 'data', 'crawl-snapshots');
+}
 
 /**
  * 첨부 크기를 줄이려고 화면에 안 보이는 덩어리를 걷어낸다.
@@ -110,7 +116,7 @@ export async function exportPackage(
   stamp?: string,
 ): Promise<string | null> {
   const at = stamp ?? new Date().toISOString().replace(/[:.]/g, '-');
-  const dir = path.join(SNAPSHOT_ROOT, `${safeName(selectorId)}_${safeName(at)}`);
+  const dir = path.join(snapshotRoot(), `${safeName(selectorId)}_${safeName(at)}`);
   try {
     await mkdir(dir, { recursive: true });
     await writeFile(path.join(dir, 'page.html'), shrinkHtml(html), 'utf-8');
@@ -133,7 +139,7 @@ export async function pruneSnapshots(selectorId: string): Promise<void> {
   const prefix = `${safeName(selectorId)}_`;
   let entries: string[];
   try {
-    entries = await readdir(SNAPSHOT_ROOT);
+    entries = await readdir(snapshotRoot());
   } catch {
     return; // 아직 스냅샷을 만든 적이 없다
   }
@@ -141,7 +147,7 @@ export async function pruneSnapshots(selectorId: string): Promise<void> {
   const stale = mine.slice(0, Math.max(0, mine.length - KEEP_PER_SELECTOR));
   for (const name of stale) {
     try {
-      await rm(path.join(SNAPSHOT_ROOT, name), { recursive: true, force: true });
+      await rm(path.join(snapshotRoot(), name), { recursive: true, force: true });
     } catch (err) {
       console.warn(
         `[crawl/export-package] 오래된 스냅샷 삭제 실패 (${name}): ${err instanceof Error ? err.message : String(err)}`,

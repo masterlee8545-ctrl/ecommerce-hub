@@ -33,7 +33,13 @@ import { systemSettings } from '@/db/schema';
 /** 메모리 캐시 유효 시간. 짧게 잡아야 사용자가 갱신한 값이 곧바로 반영된다 */
 const MEMORY_TTL_MS = 30_000;
 
-const DATA_DIR = path.join(process.cwd(), '.data');
+/**
+ * 자격증명 파일 폴더. 모듈 로드 시점에 cwd 를 굳히지 않는다
+ * (`registry.ts` 의 같은 주석 참조 — 굳혀 두면 cwd 를 옮긴 뒤 옛 경로에 쓴다).
+ */
+function dataDir(): string {
+  return path.join(process.cwd(), '.data');
+}
 
 // ─────────────────────────────────────────────────────────
 // 자격증명 정의
@@ -178,7 +184,7 @@ async function readFromDb(spec: CredentialSpec): Promise<string | null> {
 
 async function readFromFile(spec: CredentialSpec): Promise<string | null> {
   try {
-    const raw = await readFile(path.join(DATA_DIR, spec.fileName), 'utf-8');
+    const raw = await readFile(path.join(dataDir(), spec.fileName), 'utf-8');
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const direct = parsed['value'];
     if (typeof direct === 'string' && direct.length > 0) return direct;
@@ -268,11 +274,11 @@ export async function saveCredential(name: CredentialName, value: string): Promi
 
   // 파일은 로컬 개발 편의용. Vercel 은 읽기 전용이라 실패가 정상이다.
   try {
-    await mkdir(DATA_DIR, { recursive: true });
+    await mkdir(dataDir(), { recursive: true });
     const body: Record<string, string> = { value: trimmed };
     if (spec.legacyFileKey) body[spec.legacyFileKey] = trimmed;
     await writeFile(
-      path.join(DATA_DIR, spec.fileName),
+      path.join(dataDir(), spec.fileName),
       `${JSON.stringify(body, null, 2)}\n`,
       'utf-8',
     );
