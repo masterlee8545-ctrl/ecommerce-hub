@@ -19,6 +19,7 @@
  * - 200 OK: { ok: true, keyword, rowCount, filledCount, jsonPath }
  * - 409 Conflict: 다른 스크래핑 진행 중 (locked)
  * - 412 Precondition Failed: 셀록홈즈 로그인 필요 (login-required)
+ * - 502 Bad Gateway: 셀렉터 계약 실패 = 대상 사이트 화면 변경 (contract, ADR-014)
  * - 503 Service Unavailable: Chrome 실행 실패 (launch-failed)
  * - 500 Internal Server Error: 기타 실패
  */
@@ -32,6 +33,7 @@ const HTTP_CONFLICT = 409;
 const HTTP_PRECONDITION_FAILED = 412;
 const HTTP_SERVICE_UNAVAILABLE = 503;
 const HTTP_INTERNAL_SERVER_ERROR = 500;
+const HTTP_BAD_GATEWAY = 502;
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -84,6 +86,9 @@ export async function POST(request: NextRequest) {
     'login-required': HTTP_PRECONDITION_FAILED,
     'launch-failed': HTTP_SERVICE_UNAVAILABLE,
     'timeout': HTTP_SERVICE_UNAVAILABLE,
+    // 셀렉터 계약 실패 = 대상 사이트 화면이 바뀜. 재시도로는 안 풀리고
+    // 개발자가 레지스트리를 손봐야 하므로 502 (상류 문제) 로 구분해 알린다.
+    'contract': HTTP_BAD_GATEWAY,
     'other': HTTP_INTERNAL_SERVER_ERROR,
   };
   return NextResponse.json(

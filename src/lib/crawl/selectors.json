@@ -1,0 +1,474 @@
+{
+  "version": 1,
+  "selectors": {
+    "sello.row": {
+      "kind": "css",
+      "primary": "ul.td[data-rank]",
+      "fallbacks": [
+        "ul[data-rank]",
+        "[data-rank][data-coupangid]"
+      ],
+      "contract": {
+        "minMatches": 1,
+        "attr": "data-rank",
+        "mustMatch": "^\\d+$"
+      },
+      "within": null,
+      "description": "셀록홈즈 쿠팡 1페이지 분석표의 상품 행 하나",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.row_name": {
+      "kind": "css",
+      "primary": "li.name .goods-name",
+      "fallbacks": [
+        "li.name"
+      ],
+      "contract": {
+        "minMatches": 1,
+        "minTextLen": 2
+      },
+      "within": "sello.row",
+      "description": "행의 상품명",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.row_link": {
+      "kind": "css",
+      "primary": "li.name .goods-name a",
+      "fallbacks": [
+        "li.name a[href*='coupang.com']"
+      ],
+      "contract": {
+        "minMatches": 1,
+        "attr": "href",
+        "mustMatch": "coupang\\.com|/vp/products/"
+      },
+      "within": "sello.row",
+      "description": "행의 쿠팡 상품 링크",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.row_image": {
+      "kind": "css",
+      "primary": "li.name .prd-img img",
+      "fallbacks": [
+        "li.name img"
+      ],
+      "contract": {
+        "minMatches": 1,
+        "attr": "src"
+      },
+      "within": "sello.row",
+      "description": "행의 상품 썸네일. 지연 로딩 플레이스홀더(data URI·상대경로)에서 정상 화면을 실패로 만들지 않도록 값 형식은 검사하지 않고 src 속성 존재만 본다",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.row_price": {
+      "kind": "css",
+      "primary": "li.price",
+      "fallbacks": [],
+      "contract": {
+        "minMatches": 1,
+        "mustMatch": "\\d"
+      },
+      "within": "sello.row",
+      "description": "행의 판매가",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.row_review": {
+      "kind": "css",
+      "primary": "li.review .num",
+      "fallbacks": [],
+      "contract": {
+        "minMatches": 1
+      },
+      "within": "sello.row",
+      "description": "행의 리뷰 수. 신상품은 0 도 정상값이라 숫자 제약을 걸지 않는다",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.row_pv_month": {
+      "kind": "css",
+      "primary": "li.pv-month .num",
+      "fallbacks": [],
+      "contract": {
+        "minMatches": 1
+      },
+      "within": "sello.row",
+      "description": "행의 월간 조회수. 셀러라이프 확장이 나중에 채우므로 초기엔 비어 있다",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.row_sales": {
+      "kind": "css",
+      "primary": "li.sales .num",
+      "fallbacks": [],
+      "contract": {
+        "minMatches": 1
+      },
+      "within": "sello.row",
+      "description": "행의 월간 판매량 (확장이 채움)",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.row_sales_month": {
+      "kind": "css",
+      "primary": "li.sales-month .num",
+      "fallbacks": [],
+      "contract": {
+        "minMatches": 1
+      },
+      "within": "sello.row",
+      "description": "행의 월 매출액 (확장이 채움)",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.row_cv_month": {
+      "kind": "css",
+      "primary": "li.cv-month .num",
+      "fallbacks": [],
+      "contract": {
+        "minMatches": 1
+      },
+      "within": "sello.row",
+      "description": "행의 월 전환율 (확장이 채움)",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.row_sourcing_price": {
+      "kind": "css",
+      "primary": "li.sourcing-price",
+      "fallbacks": [],
+      "contract": {
+        "minMatches": 1
+      },
+      "within": "sello.row",
+      "description": "행의 예상 소싱가",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.row_expected_amount": {
+      "kind": "css",
+      "primary": "li.expected-amount",
+      "fallbacks": [],
+      "contract": {
+        "minMatches": 1
+      },
+      "within": "sello.row",
+      "description": "행의 예상 매출액",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.row_expected_price_rate": {
+      "kind": "css",
+      "primary": "li.expected-price-rate",
+      "fallbacks": [],
+      "contract": {
+        "minMatches": 1
+      },
+      "within": "sello.row",
+      "description": "행의 예상 마진율",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.row_rocket": {
+      "kind": "css",
+      "primary": "li.del.rocket",
+      "fallbacks": [],
+      "contract": {
+        "minMatches": 1
+      },
+      "within": "sello.row",
+      "description": "행의 로켓배송 배지. 로켓 상품이 하나도 없는 키워드에서는 0건이 정상이므로, 이 항목의 계약 실패는 '깨짐'의 근거가 못 된다 — 추출용으로만 쓰고 무인 점검 대상으로 삼지 않는다",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.search_input": {
+      "kind": "css",
+      "primary": "input.search-input",
+      "fallbacks": [
+        "input[type='search']",
+        "input[placeholder*='키워드']"
+      ],
+      "contract": {
+        "minMatches": 1
+      },
+      "within": null,
+      "description": "셀록홈즈 키워드 검색 입력칸",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.search_button": {
+      "kind": "css",
+      "primary": "button.search-icon",
+      "fallbacks": [
+        "button[type='submit']"
+      ],
+      "contract": {
+        "minMatches": 1
+      },
+      "within": null,
+      "description": "셀록홈즈 검색 실행 버튼",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.page_select_trigger": {
+      "kind": "css",
+      "primary": "button",
+      "fallbacks": [],
+      "contract": {
+        "minMatches": 1,
+        "mustMatch": "^선택$"
+      },
+      "within": null,
+      "description": "분석 범위 드롭다운을 여는 버튼. 텍스트가 정확히 '선택'인 버튼을 고른다",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.page_select_option": {
+      "kind": "css",
+      "primary": "li",
+      "fallbacks": [],
+      "contract": {
+        "minMatches": 1,
+        "mustMatch": "^1 페이지 상품분석$"
+      },
+      "within": null,
+      "description": "드롭다운의 '1 페이지 상품분석' 항목",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sello.extension_missing_notice": {
+      "kind": "css",
+      "primary": "body",
+      "fallbacks": [],
+      "contract": {
+        "minMatches": 1,
+        "mustMatch": "익스텐션 설치|확장 프로그램 설치"
+      },
+      "within": null,
+      "description": "셀러라이프 확장 미설치 안내. 이게 잡히면 수집을 중단해야 한다",
+      "sampleUrls": [],
+      "requiresBrowser": true,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sellochomes.category_tree": {
+      "kind": "json",
+      "primary": "/sourcing/include/moveCategoryPage",
+      "fallbacks": [],
+      "contract": {
+        "status": 200,
+        "jsonKeys": [
+          "_result",
+          "queryCategoryId",
+          "setCategory_Info"
+        ]
+      },
+      "within": null,
+      "description": "셀록홈즈 카테고리 경로 → 카테고리 ID + 트리",
+      "sampleUrls": [],
+      "requiresBrowser": false,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sellochomes.category_items": {
+      "kind": "json",
+      "primary": "/sourcing/category/items",
+      "fallbacks": [],
+      "contract": {
+        "status": 200,
+        "jsonKeys": [
+          "_result",
+          "discoveryCnt",
+          "discoveryData"
+        ]
+      },
+      "within": null,
+      "description": "셀록홈즈 카테고리별 키워드 한 페이지",
+      "sampleUrls": [],
+      "requiresBrowser": false,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sellochomes.keyword_info": {
+      "kind": "json",
+      "primary": "/keyword-analysis/coupang-keyword/coupangKeywordInfo",
+      "fallbacks": [],
+      "contract": {
+        "status": 200,
+        "jsonKeys": [
+          "success",
+          "data.items",
+          "data.totalCnt"
+        ]
+      },
+      "within": null,
+      "description": "셀록홈즈 키워드 1페이지 상품 정보",
+      "sampleUrls": [],
+      "requiresBrowser": false,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "sellochomes.chart": {
+      "kind": "json",
+      "primary": "/keyword-analysis/chart",
+      "fallbacks": [],
+      "contract": {
+        "status": 200,
+        "jsonKeys": [
+          "success",
+          "data"
+        ]
+      },
+      "within": null,
+      "description": "셀록홈즈 키워드 일별 상대지수 (success + data.results 구조)",
+      "sampleUrls": [],
+      "requiresBrowser": false,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "itemscout.categories_map": {
+      "kind": "json",
+      "primary": "category/coupang_categories_map",
+      "fallbacks": [],
+      "contract": {
+        "status": 200,
+        "jsonKeys": [
+          "data"
+        ]
+      },
+      "within": null,
+      "description": "아이템스카우트 쿠팡 카테고리 트리",
+      "sampleUrls": [],
+      "requiresBrowser": false,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "itemscout.subcategories": {
+      "kind": "json",
+      "primary": "category/{id}/subcategories",
+      "fallbacks": [],
+      "contract": {
+        "status": 200,
+        "jsonKeys": [
+          "data"
+        ]
+      },
+      "within": null,
+      "description": "아이템스카우트 하위 카테고리 목록",
+      "sampleUrls": [],
+      "requiresBrowser": false,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "itemscout.category_data": {
+      "kind": "json",
+      "primary": "category/{id}/data",
+      "fallbacks": [],
+      "contract": {
+        "status": 200,
+        "jsonKeys": [
+          "data.data"
+        ]
+      },
+      "within": null,
+      "description": "아이템스카우트 카테고리별 키워드. 키워드는 data.data 아래 맵으로 온다",
+      "sampleUrls": [],
+      "requiresBrowser": false,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "itemscout.keyword_trend": {
+      "kind": "json",
+      "primary": "v2/keyword/trend",
+      "fallbacks": [],
+      "contract": {
+        "status": 200,
+        "jsonKeys": [
+          "data"
+        ]
+      },
+      "within": null,
+      "description": "아이템스카우트 트렌딩 키워드",
+      "sampleUrls": [],
+      "requiresBrowser": false,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "naver.search": {
+      "kind": "json",
+      "primary": "https://openapi.naver.com/v1/search/{type}.json",
+      "fallbacks": [],
+      "contract": {
+        "status": 200,
+        "jsonKeys": [
+          "total",
+          "items"
+        ]
+      },
+      "within": null,
+      "description": "네이버 검색 OpenAPI (블로그/카페/지식인/쇼핑/지역)",
+      "sampleUrls": [],
+      "requiresBrowser": false,
+      "healedAt": null,
+      "healedFrom": null
+    },
+    "kakao.local_keyword": {
+      "kind": "json",
+      "primary": "https://dapi.kakao.com/v2/local/search/keyword.json",
+      "fallbacks": [],
+      "contract": {
+        "status": 200,
+        "jsonKeys": [
+          "meta",
+          "documents"
+        ]
+      },
+      "within": null,
+      "description": "카카오 로컬 키워드 장소 검색",
+      "sampleUrls": [],
+      "requiresBrowser": false,
+      "healedAt": null,
+      "healedFrom": null
+    }
+  }
+}

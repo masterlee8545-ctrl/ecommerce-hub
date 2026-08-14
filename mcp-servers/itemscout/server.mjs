@@ -59,6 +59,17 @@ async function getToken() {
 // API 호출
 // ─────────────────────────────────────────────────────────
 
+/**
+ * 응답이 기대한 모양이 아닐 때 던진다.
+ *
+ * 예전에는 이런 경우 빈 배열을 돌려줬다. 그러면 "결과가 없음" 과
+ * "아이템스카우트가 응답 구조를 바꿈" 이 도구 사용자에게 똑같아 보인다
+ * (헌법 P-1 위반). 값 자체는 메시지에 넣지 않는다 (P-7).
+ */
+function schemaMismatch(path, reason) {
+  return new Error(`[itemscout] 응답 구조가 예상과 다릅니다 (${path}): ${reason}`);
+}
+
 async function fetchIS(path, options = {}) {
   const token = await getToken();
   const res = await fetch(`${BASE_URL}/${path}`, {
@@ -68,6 +79,11 @@ async function fetchIS(path, options = {}) {
       ...(options.headers ?? {}),
     },
   });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(
+      '[itemscout] 토큰이 만료됐습니다. 설정 → 아이템스카우트 연결에서 다시 발급받으세요.',
+    );
+  }
   if (!res.ok) {
     throw new Error(`[itemscout] ${res.status} ${res.statusText}: ${path}`);
   }
@@ -75,23 +91,32 @@ async function fetchIS(path, options = {}) {
 }
 
 async function getTopCategories() {
-  const res = await fetchIS('category/coupang_categories_map');
-  const all = (res.data || []).flat();
+  const path = 'category/coupang_categories_map';
+  const res = await fetchIS(path);
+  if (!Array.isArray(res.data)) throw schemaMismatch(path, 'data 가 배열이 아닙니다');
+  const all = res.data.flat();
   return all.filter((c) => c.lv === 1);
 }
 
 async function getSubcategories(id) {
+  const path = 'category/{id}/subcategories';
   const res = await fetchIS(`category/${id}/subcategories`);
-  return Array.isArray(res.data) ? res.data : [];
+  if (!Array.isArray(res.data)) throw schemaMismatch(path, 'data 가 배열이 아닙니다');
+  return res.data;
 }
 
 async function getCategoryKeywords(id) {
+  const path = 'category/{id}/data';
   const res = await fetchIS(`category/${id}/data`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   });
   const map = res.data?.data;
-  if (!map || typeof map !== 'object') return [];
+  // null 은 "아직 집계 전" 이라는 정상 상태다. 다른 타입이면 구조가 바뀐 것.
+  if (map === null || map === undefined) return [];
+  if (typeof map !== 'object' || Array.isArray(map)) {
+    throw schemaMismatch(path, 'data.data 가 키워드 맵이 아닙니다');
+  }
   return Object.values(map).map((raw) => ({
     keyword: raw.keyword,
     rank: raw.rank,
@@ -108,8 +133,10 @@ async function getCategoryKeywords(id) {
 }
 
 async function getTrendingKeywords() {
-  const res = await fetchIS('v2/keyword/trend');
-  return Array.isArray(res.data) ? res.data : [];
+  const path = 'v2/keyword/trend';
+  const res = await fetchIS(path);
+  if (!Array.isArray(res.data)) throw schemaMismatch(path, 'data 가 배열이 아닙니다');
+  return res.data;
 }
 
 // ─────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@
 | 프로젝트 | ecommerce-hub (BUYWISE 이커머스 통합관리 시스템) |
 | 문서 버전 | 1.3 |
 | 작성일 | 2026-04-07 |
-| 관련 문서 | docs/CPS.md, docs/SPEC.md, docs/ADR.md, docs/DATA_MODEL.md, docs/INFOHUB_INTEGRATION.md, docs/GLOSSARY.md |
+| 관련 문서 | docs/CPS.md, docs/SPEC.md, docs/ADR.md, docs/DATA_MODEL.md, docs/INFOHUB_INTEGRATION.md, docs/GLOSSARY.md, docs/ADR-014.md + docs/CRAWL_REGISTRY.md (크롤링 규약) |
 | 형제 프로젝트 | InfoHub (`C:/개발/정보취합-2/`) — ADR-011 계약 |
 | 사용자 페르소나 | 이재홍 대표 — **비개발자**. 코드/SQL/스키마/쿼리 같은 기술 용어 모름. 모든 보고는 쉬운 말 + 용어 설명 의무 (P-9, §11) |
 

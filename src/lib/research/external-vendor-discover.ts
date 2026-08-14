@@ -9,8 +9,12 @@
  *   2. 카카오 로컬로 각 후보의 정확한 전화번호 + 주소 검증
  *   3. 후보 카드 (체크박스) → "vendors INSERT"
  */
+// 배럴 대신 필요한 모듈만 (배럴은 금고→DB 와 cheerio 까지 끌고 온다)
+import { runCrawlSources } from '@/lib/crawl/report';
+import type { SourceOutcome } from '@/lib/crawl/types';
+
 import { kakaoKeywordSearch, type KakaoLocalPlace } from './kakao-local';
-import { naverMultiSearch, type NaverSearchItem } from './naver-search';
+import { naverSearch, type NaverSearchItem } from './naver-search';
 
 export interface ExternalCandidate {
   /** 카카오에서 매칭된 사업장 (있으면) */
@@ -38,6 +42,15 @@ export interface DiscoverResult {
   };
   brandCandidates: string[];
   candidates: ExternalCandidate[];
+  /**
+   * 소스별 수집 상태 (ADR-014).
+   *
+   * 예전에는 네이버 한쪽이 죽어도 그냥 0건으로 섞여 들어가, 화면에서는
+   * "후보가 없네" 로만 보였다. 이제 어느 소스가 왜 비었는지 남는다.
+   */
+  sources: Record<string, SourceOutcome>;
+  /** 못 채운 부분을 사람 말로 (P-3 — UI 는 이걸 ❓ 로 띄우면 된다) */
+  gaps: string[];
 }
 
 /**
@@ -79,22 +92,47 @@ function extractBrandCandidates(items: NaverSearchItem[]): string[] {
     }
   }
 
-  // 빈도순 정렬, 상위 10개
+  // 빈도순 정렬, 상위 N 개
   return [...counts.entries()]
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 10)
+    .slice(0, MAX_BRAND_CANDIDATES)
     .map(([w]) => w);
 }
 
-export async function discoverExternalVendors(query: string): Promise<DiscoverResult> {
-  // 1) 네이버 블로그 + 지식인 검색
-  const naver = await naverMultiSearch(query, ['blog', 'kin']);
+/** 빈도순으로 남길 브랜드 후보 수. */
+const MAX_BRAND_CANDIDATES = 10;
+/** 한 번에 검증할 브랜드 후보 수. */
+const MAX_BRANDS_TO_VERIFY = 5;
+/** 브랜드당 조회할 카카오 장소 수. */
+const KAKAO_PLACES_PER_BRAND = 3;
+/** 후보 카드로 만들 장소 수. */
+const KAKAO_PLACES_TO_KEEP = 2;
+/** 네이버에서 한 종류당 가져올 글 수. */
+const NAVER_DISPLAY = 10;
 
-  const blogItems =
-    'items' in (naver.blog ?? {}) ? (naver.blog as { items: NaverSearchItem[] }).items : [];
-  const kinItems =
-    'items' in (naver.kin ?? {}) ? (naver.kin as { items: NaverSearchItem[] }).items : [];
-  const allItems = [...blogItems, ...kinItems];
+export async function discoverExternalVendors(query: string): Promise<DiscoverResult> {
+  // 1) 네이버 블로그 + 지식인 검색 — 한쪽이 실패해도 나머지는 계속 간다.
+  //    실패는 report 의 sources/gaps 에 그대로 남는다.
+  const naverReport = await runCrawlSources<NaverSearchItem>(query, [
+    {
+      name: 'naver_blog',
+      selectorIds: ['naver.search'],
+      run: async () =>
+        (await naverSearch({ query, type: 'blog', display: NAVER_DISPLAY })).items,
+    },
+    {
+      name: 'naver_kin',
+      selectorIds: ['naver.search'],
+      run: async () =>
+        (await naverSearch({ query, type: 'kin', display: NAVER_DISPLAY })).items,
+    },
+  ]);
+
+  const blogCount = naverReport.summary.bySource['naver_blog'] ?? 0;
+  const kinCount = naverReport.summary.bySource['naver_kin'] ?? 0;
+  const allItems = naverReport.items;
+  const gaps = [...naverReport.gaps];
+  const sources: Record<string, SourceOutcome> = { ...naverReport.sources };
 
   // 2) 브랜드 후보 추출
   const brands = extractBrandCandidates(allItems);
@@ -102,20 +140,31 @@ export async function discoverExternalVendors(query: string): Promise<DiscoverRe
   // 3) 각 브랜드를 카카오 로컬로 검증
   const candidates: ExternalCandidate[] = [];
   const seenKeys = new Set<string>();
+  let kakaoCalls = 0;
+  let kakaoFailures = 0;
+  let kakaoHits = 0;
+  const kakaoStartedAt = Date.now();
 
-  for (const brand of brands.slice(0, 5)) {
+  for (const brand of brands.slice(0, MAX_BRANDS_TO_VERIFY)) {
     // 카카오 로컬 검색
     let kakaoPlaces: KakaoLocalPlace[] = [];
+    kakaoCalls += 1;
     try {
-      const kakao = await kakaoKeywordSearch({ query: brand, size: 3 });
+      const kakao = await kakaoKeywordSearch({ query: brand, size: KAKAO_PLACES_PER_BRAND });
       kakaoPlaces = kakao.documents;
+      kakaoHits += kakaoPlaces.length;
     } catch (e) {
-      console.warn(`[discover] 카카오 ${brand} 실패:`, e instanceof Error ? e.message : e);
+      // 예전에는 console.warn 만 하고 넘어가, 카카오가 통째로 죽어도 결과에
+      // 흔적이 남지 않았다. 이제 gaps 로 올라간다.
+      kakaoFailures += 1;
+      const message = e instanceof Error ? e.message : String(e);
+      console.warn(`[discover] 카카오 ${brand} 실패:`, message);
+      gaps.push(`카카오 로컬에서 '${brand}' 사업장 정보를 확인하지 못했습니다 — ${message}`);
     }
 
     if (kakaoPlaces.length > 0) {
       // 카카오에서 매칭됨 — 정확한 사업장 정보
-      for (const place of kakaoPlaces.slice(0, 2)) {
+      for (const place of kakaoPlaces.slice(0, KAKAO_PLACES_TO_KEEP)) {
         const key = `${place.place_name}|${place.phone}`;
         if (seenKeys.has(key)) continue;
         seenKeys.add(key);
@@ -166,10 +215,34 @@ export async function discoverExternalVendors(query: string): Promise<DiscoverRe
     }
   }
 
+  // 카카오는 브랜드마다 부르므로 소스 하나로 묶어 기록한다.
+  sources['kakao_local'] = {
+    status:
+      kakaoCalls === 0
+        ? 'skipped'
+        : kakaoFailures === kakaoCalls
+          ? 'error'
+          : kakaoHits > 0
+            ? 'ok'
+            : 'empty',
+    count: kakaoHits,
+    error: kakaoFailures > 0 ? `${kakaoCalls}건 중 ${kakaoFailures}건 실패` : null,
+    elapsedMs: Date.now() - kakaoStartedAt,
+    selectorIds: ['kakao.local_keyword'],
+  };
+
+  if (brands.length === 0 && allItems.length > 0) {
+    gaps.push(
+      `네이버 글 ${allItems.length}건에서 업체명 후보를 뽑지 못했습니다 — 검색어를 좁혀 보세요.`,
+    );
+  }
+
   return {
     query,
-    naverHits: { blog: blogItems.length, kin: kinItems.length },
+    naverHits: { blog: blogCount, kin: kinCount },
     brandCandidates: brands,
     candidates,
+    sources,
+    gaps,
   };
 }
